@@ -1,0 +1,2 @@
+Pour être synchronisé temporellement: 
+ntp

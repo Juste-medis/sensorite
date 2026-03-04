@@ -1,0 +1,47 @@
+name: sensorite
+description: "A new Flutter project." 
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+ 
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2 
+dependencies:
+  flutter:
+    sdk: flutter
+ 
+  cupertino_icons: ^1.0.8
+
+  # Capteurs
+  sensors_plus: ^4.0.0      # Accès accéléromètre/gyroscope
+  
+  # Stockage
+  path_provider: ^2.1.1     # Chemins de fichiers
+  csv: ^5.1.1               # Export CSV
+  
+  # Graphiques (pour la phase 2)
+  fl_chart: ^0.66.0         # Graphiques style
+  
+  # Gestion d'état
+  provider: ^6.1.1          # ViewModels simples
+  
+  # Utilitaires
+  permission_handler: ^11.0.1 # Permissions
+  intl: ^0.18.1             # Formatage dates
+  
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+ 
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true 
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
