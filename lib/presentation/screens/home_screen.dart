@@ -14,7 +14,7 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tunnel IMU'),
+        title: const Text('Sensorite'),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_outlined),

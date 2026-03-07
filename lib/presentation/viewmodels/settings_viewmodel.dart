@@ -4,6 +4,9 @@ import '../../data/services/file_service.dart';
 class SettingsViewModel extends ChangeNotifier {
   final FileService _fileService = FileService();
 
+  // Thème
+  bool _darkMode = false;
+
   // Paramètres capteurs
   String _accelerometerFrequency = '100 Hz';
   String _gyroscopeFrequency = '100 Hz';
@@ -21,6 +24,7 @@ class SettingsViewModel extends ChangeNotifier {
   int _recordingsCount = 0;
 
   // Getters
+  bool get darkMode => _darkMode;
   String get accelerometerFrequency => _accelerometerFrequency;
   String get gyroscopeFrequency => _gyroscopeFrequency;
   bool get highPrecisionMode => _highPrecisionMode;
@@ -65,6 +69,12 @@ class SettingsViewModel extends ChangeNotifier {
   }
 
   // Setters
+  void setDarkMode(bool value) {
+    _darkMode = value;
+    _saveSettings();
+    notifyListeners();
+  }
+
   void setAccelerometerFrequency(String value) {
     _accelerometerFrequency = value;
     _saveSettings();
@@ -118,6 +128,7 @@ class SettingsViewModel extends ChangeNotifier {
   }
 
   void resetToDefaults() {
+    _darkMode = false;
     _accelerometerFrequency = '100 Hz';
     _gyroscopeFrequency = '100 Hz';
     _highPrecisionMode = false;

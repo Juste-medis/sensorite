@@ -32,7 +32,7 @@ class _RecordScreenState extends State<RecordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Enregistrement IMU')),
+      appBar: AppBar(title: const Text('Enregistrement Sensorite')),
       body: Consumer<RecordingViewModel>(
         builder: (context, viewModel, child) {
           return Padding(

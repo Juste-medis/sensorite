@@ -25,6 +25,25 @@ class SettingsScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              // Section Apparence
+              NotionHeader(
+                title: 'Apparence',
+                subtitle: 'Personnalisation de l\'interface',
+              ),
+              const SizedBox(height: 16),
+
+              NotionCard(
+                child: _buildSwitchSetting(
+                  label: 'Mode sombre',
+                  value: viewModel.darkMode,
+                  onChanged: viewModel.setDarkMode,
+                  description:
+                      'Activer le thème sombre pour réduire la fatigue oculaire',
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
               // Section Fréquence d'échantillonnage
               NotionHeader(
                 title: 'Capteurs',
