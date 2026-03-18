@@ -5,19 +5,26 @@ import 'dart:math' as math;
 const double _earthRadiusMeters = 6378137.0;
 const double _defaultDtSeconds = 0.2;
 const double _maxDtSeconds = 1.0;
-const double _speedDamping = 0.97;
-const double _maxSpeedMps = 5.5;
-const double _gpsSpeedBlend = 0.30;
-const double _gpsHeadingBlend = 0.12;
-const double _gravityTimeConstantSeconds = 0.75;
+const double _maxSpeedMps = 3.5; // ~12 km/h max walking/jogging
+const double _strideLength = 0.72; // longueur de pas moyenne en mètres
 
+// ─── État global dead-reckoning ───────────────────────────────────────────────
 DateTime? _lastSensorTimestamp;
 double _estimatedHeadingDeg = 0.0;
 double _estimatedSpeedMps = 0.0;
-double _gravityX = 0.0;
-double _gravityY = 0.0;
-double _gravityZ = 0.0;
-bool _gravityInitialized = false;
+
+// ─── Filtre de Kalman scalaire pour le cap ────────────────────────────────────
+// État    : cap en degrés
+// Prédict : cap += gyroZ * dt
+// Correct : fusion avec heading GPS quand disponible
+bool _headingInitialized = false; // true après le premier fix GPS
+
+// ─── Détection de pas ─────────────────────────────────────────────────────────
+double _smoothedMag = 0.0;
+bool _smoothedMagInit = false;
+double _prevMagLinear = 0.0;
+DateTime? _lastStepTime;
+double _stepIntervalSeconds = 0.65; // intervalle initial (≈1.5 pas/s)
 
 double _toRadians(double degrees) => degrees * math.pi / 180.0;
 double _toDegrees(double radians) => radians * 180.0 / math.pi;
@@ -29,6 +36,7 @@ double _normalizeAngleDegrees(double value) {
   return normalized;
 }
 
+
 double _clamp(double value, double min, double max) {
   if (value < min) return min;
   if (value > max) return max;
@@ -39,96 +47,100 @@ void resetDeadReckoning() {
   _lastSensorTimestamp = null;
   _estimatedHeadingDeg = 0.0;
   _estimatedSpeedMps = 0.0;
-  _gravityX = 0.0;
-  _gravityY = 0.0;
-  _gravityZ = 0.0;
-  _gravityInitialized = false;
+  _headingInitialized = false;
+  _smoothedMag = 0.0;
+  _smoothedMagInit = false;
+  _prevMagLinear = 0.0;
+  _lastStepTime = null;
+  _stepIntervalSeconds = 0.65;
 }
 
+/// Synchronise la vitesse et le pas depuis un fix GPS.
+/// Le cap est géré uniquement par le gyroscope — pas de correction GPS.
 void syncDeadReckoning(LocationData referencePosition) {
-  final heading = referencePosition.heading;
-  if (_isFinite(heading)) {
-    _estimatedHeadingDeg = _normalizeAngleDegrees(heading!);
+  // Initialisation du cap au premier fix si pas encore fait
+  if (!_headingInitialized) {
+    final heading = referencePosition.heading;
+    if (_isFinite(heading)) {
+      _estimatedHeadingDeg = _normalizeAngleDegrees(heading!);
+      _headingInitialized = true;
+    }
   }
 
   final speed = referencePosition.speed;
   if (_isFinite(speed) && speed! >= 0) {
     _estimatedSpeedMps = _clamp(speed, 0.0, _maxSpeedMps);
+    if (speed > 0.3) {
+      _stepIntervalSeconds = _clamp(_strideLength / speed, 0.25, 2.0);
+    }
   }
 
-  // Reset dt to avoid a large integration jump after state resync.
   _lastSensorTimestamp = null;
 }
 
 LocationData interpolPosition(LocationData currentPosition, SensorData data) {
   final latitude = currentPosition.latitude;
   final longitude = currentPosition.longitude;
-
-  if (latitude == null || longitude == null) {
-    return currentPosition;
-  }
+  if (latitude == null || longitude == null) return currentPosition;
 
   final now = data.timestamp;
-  final elapsedSeconds = _lastSensorTimestamp == null
+  final elapsed = _lastSensorTimestamp == null
       ? _defaultDtSeconds
       : now.difference(_lastSensorTimestamp!).inMicroseconds / 1e6;
-  final dt = _clamp(elapsedSeconds, 0.001, _maxDtSeconds);
+  final dt = _clamp(elapsed, 0.001, _maxDtSeconds);
   _lastSensorTimestamp = now;
 
-  final locationSpeed = currentPosition.speed;
-  if (_isFinite(locationSpeed) && locationSpeed! >= 0) {
-    _estimatedSpeedMps = _estimatedSpeedMps * (1.0 - _gpsSpeedBlend) +
-        locationSpeed * _gpsSpeedBlend;
-  }
-
-  final headingFromLocation = currentPosition.heading;
-  if (_isFinite(headingFromLocation) &&
-      _isFinite(locationSpeed) &&
-      locationSpeed! > 0.8) {
-    final normalizedHeading = _normalizeAngleDegrees(headingFromLocation!);
-    _estimatedHeadingDeg = _normalizeAngleDegrees(
-      _estimatedHeadingDeg * (1.0 - _gpsHeadingBlend) +
-          normalizedHeading * _gpsHeadingBlend,
-    );
-  }
-
+  // ── 1. Cap — prédiction Kalman via gyroscope ─────────────────────────────
   final gyroZ = data.gyroZ ?? 0.0;
+  _estimatedHeadingDeg = _normalizeAngleDegrees(
+    _estimatedHeadingDeg - _toDegrees(gyroZ) * dt,
+  );
+  // Covariance croît avec le temps (dérive du gyro)
 
-  // Gyroscope gyroz is in rad/s. Positive z rotates around vertical axis.
-  // In screen coordinates yaw sign may vary by device orientation; this
-  // convention keeps a stable heading update for dead-reckoning.
-  final deltaHeading = _toDegrees(gyroZ) * dt;
-  _estimatedHeadingDeg = _normalizeAngleDegrees(_estimatedHeadingDeg + deltaHeading);
+  // ── 2. Détection de pas par magnitude accéléromètre ─────────────────────
+  final ax = data.accelX ?? 0.0;
+  final ay = data.accelY ?? 0.0;
+  final az = data.accelZ ?? 0.0;
+  final mag = math.sqrt(ax * ax + ay * ay + az * az);
 
-  final accelX = data.accelX ?? 0.0;
-  final accelY = data.accelY ?? 0.0;
-  final accelZ = data.accelZ ?? 0.0;
-
-  if (!_gravityInitialized) {
-    _gravityX = accelX;
-    _gravityY = accelY;
-    _gravityZ = accelZ;
-    _gravityInitialized = true;
+  if (!_smoothedMagInit) {
+    _smoothedMag = mag;
+    _smoothedMagInit = true;
   }
 
-  // Low-pass estimate of gravity: g[k] = alpha*g[k-1] + (1-alpha)*a[k]
-  final alpha = _gravityTimeConstantSeconds /
-      (_gravityTimeConstantSeconds + dt);
-  _gravityX = alpha * _gravityX + (1.0 - alpha) * accelX;
-  _gravityY = alpha * _gravityY + (1.0 - alpha) * accelY;
-  _gravityZ = alpha * _gravityZ + (1.0 - alpha) * accelZ;
+  // Filtre passe-bas : suit la composante DC (gravité + posture)
+  const smoothAlpha = 0.85;
+  _smoothedMag = smoothAlpha * _smoothedMag + (1.0 - smoothAlpha) * mag;
 
-  final linearY = accelY - _gravityY;
+  final magLinear = mag - _smoothedMag;
 
-  // Use gravity-corrected forward acceleration with dead-zone and clamping.
-  final accelThreshold = 0.18;
-  final correctedAccel = linearY.abs() < accelThreshold ? 0.0 : linearY;
-  final limitedAccel = _clamp(correctedAccel, -2.0, 2.0);
+  // Détection front descendant après un pic de pas
+  const stepThreshold = 1.0; // m/s²
+  if (_prevMagLinear > stepThreshold && magLinear <= stepThreshold) {
+    final timeSinceLastStep = _lastStepTime == null
+        ? double.infinity
+        : now.difference(_lastStepTime!).inMicroseconds / 1e6;
 
-  _estimatedSpeedMps += limitedAccel * dt * 0.45;
-  _estimatedSpeedMps *= _speedDamping;
-  _estimatedSpeedMps = _clamp(_estimatedSpeedMps, 0.0, _maxSpeedMps);
+    if (timeSinceLastStep > 0.30) {
+      if (timeSinceLastStep < 2.0) {
+        _stepIntervalSeconds = timeSinceLastStep;
+      }
+      _estimatedSpeedMps = _strideLength / _stepIntervalSeconds;
+      _estimatedSpeedMps = _clamp(_estimatedSpeedMps, 0.2, _maxSpeedMps);
+      _lastStepTime = now;
+    }
+  }
+  _prevMagLinear = magLinear;
 
+  // Décroissance rapide si aucun pas depuis 1.5 s
+  if (_lastStepTime != null) {
+    final idle = now.difference(_lastStepTime!).inMicroseconds / 1e6;
+    if (idle > 1.5) {
+      _estimatedSpeedMps *= math.pow(0.55, dt).toDouble();
+    }
+  }
+
+  // ── 3. Mise à jour de la position ────────────────────────────────────────
   final headingRad = _toRadians(_estimatedHeadingDeg);
   final distance = _estimatedSpeedMps * dt;
 
@@ -136,17 +148,14 @@ LocationData interpolPosition(LocationData currentPosition, SensorData data) {
   final deltaEast = distance * math.sin(headingRad);
 
   final latRad = _toRadians(latitude);
-  final deltaLat = (deltaNorth / _earthRadiusMeters) * (180.0 / math.pi);
+  final deltaLat = deltaNorth / _earthRadiusMeters * (180.0 / math.pi);
   final denom = (_earthRadiusMeters * math.cos(latRad)).abs();
   final safeDenom = denom < 1e-6 ? 1e-6 : denom;
-  final deltaLng = (deltaEast / safeDenom) * (180.0 / math.pi);
-
-  final nextLat = latitude + deltaLat;
-  final nextLng = longitude + deltaLng;
+  final deltaLng = deltaEast / safeDenom * (180.0 / math.pi);
 
   return LocationData.fromMap({
-    'latitude': nextLat,
-    'longitude': nextLng,
+    'latitude': latitude + deltaLat,
+    'longitude': longitude + deltaLng,
     'accuracy': currentPosition.accuracy,
     'altitude': currentPosition.altitude,
     'speed': _estimatedSpeedMps,

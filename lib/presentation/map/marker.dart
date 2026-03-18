@@ -6,12 +6,14 @@ class RealtimeUserMarker extends StatefulWidget {
     super.key,
     required this.heading,
     this.size = 56,
-    this.accuracy = 0.0, // 0.0 = pas d'anneau de précision
+    this.accuracy = 0.0,
+    this.color = const Color(0xFF007AFF),
   });
 
   final double heading;
   final double size;
   final double accuracy;
+  final Color color;
 
   @override
   State<RealtimeUserMarker> createState() => _RealtimeUserMarkerState();
@@ -96,9 +98,9 @@ class _RealtimeUserMarkerState extends State<RealtimeUserMarker>
               height: s * (0.4 + widget.accuracy.clamp(0, 1) * 0.6),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF007AFF).withValues(alpha: 0.12),
+                color: widget.color.withValues(alpha: 0.12),
                 border: Border.all(
-                  color: const Color(0xFF007AFF).withValues(alpha: 0.25),
+                  color: widget.color.withValues(alpha: 0.25),
                   width: 1,
                 ),
               ),
@@ -117,9 +119,7 @@ class _RealtimeUserMarkerState extends State<RealtimeUserMarker>
                   height: s * 0.3,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: const Color(
-                      0xFF007AFF,
-                    ).withValues(alpha: opacity * 0.35),
+                    color: widget.color.withValues(alpha: opacity * 0.35),
                   ),
                 ),
               );
@@ -135,7 +135,7 @@ class _RealtimeUserMarkerState extends State<RealtimeUserMarker>
                 angle: angle,
                 child: CustomPaint(
                   size: Size(s, s),
-                  painter: _DirectionalConePainter(),
+                  painter: _DirectionalConePainter(color: widget.color),
                 ),
               );
             },
@@ -150,7 +150,7 @@ class _RealtimeUserMarkerState extends State<RealtimeUserMarker>
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF007AFF).withValues(alpha: 0.45),
+                  color: widget.color.withValues(alpha: 0.45),
                   blurRadius: s * 0.2,
                   spreadRadius: s * 0.03,
                 ),
@@ -163,9 +163,9 @@ class _RealtimeUserMarkerState extends State<RealtimeUserMarker>
             ),
             padding: EdgeInsets.all(s * 0.035),
             child: Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Color(0xFF007AFF),
+                color: widget.color,
               ),
             ),
           ),
@@ -176,6 +176,9 @@ class _RealtimeUserMarkerState extends State<RealtimeUserMarker>
 }
 
 class _DirectionalConePainter extends CustomPainter {
+  const _DirectionalConePainter({this.color = const Color(0xFF007AFF)});
+  final Color color;
+
   @override
   void paint(Canvas canvas, Size size) {
     final cx = size.width / 2;
@@ -212,8 +215,8 @@ class _DirectionalConePainter extends CustomPainter {
       center: Alignment.center,
       radius: 0.5,
       colors: [
-        const Color(0xFF007AFF).withValues(alpha: 0.55),
-        const Color(0xFF007AFF).withValues(alpha: 0.0),
+        color.withValues(alpha: 0.55),
+        color.withValues(alpha: 0.0),
       ],
       stops: const [0.0, 1.0],
     ).createShader(Rect.fromCircle(center: Offset(cx, cy), radius: radius));
@@ -227,5 +230,5 @@ class _DirectionalConePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(_DirectionalConePainter old) => old.color != color;
 }
