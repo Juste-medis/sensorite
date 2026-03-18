@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-import '../../../app/theme/colors.dart';
-import '../../../app/theme/text_styles.dart';
+import '../../../theme/colors.dart';
+import '../../../theme/text_styles.dart';
 import '../common/notion_card.dart';
 
 class GyroscopeChart extends StatefulWidget {

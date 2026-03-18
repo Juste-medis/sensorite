@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../app/theme/colors.dart';
-import '../../app/theme/text_styles.dart';
+import '../../theme/colors.dart';
+import '../../theme/text_styles.dart';
 import '../widgets/common/notion_card.dart';
 import '../widgets/common/notion_button.dart';
 import '../widgets/common/notion_header.dart';

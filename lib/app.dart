@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'theme/app_theme.dart';
-import '../presentation/screens/home_screen.dart';
-import '../presentation/viewmodels/recording_viewmodel.dart';
-import '../presentation/viewmodels/settings_viewmodel.dart';
+import 'presentation/screens/home_screen.dart';
+import 'presentation/viewmodels/recording_viewmodel.dart';
+import 'presentation/viewmodels/settings_viewmodel.dart';
 
 class MyApp extends StatelessWidget {
   const MyApp({Key? key}) : super(key: key);

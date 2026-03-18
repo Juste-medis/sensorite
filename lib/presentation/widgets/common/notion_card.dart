@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:sensorite/app/theme/text_styles.dart';
-import '../../../app/theme/colors.dart';
+import 'package:sensorite/theme/text_styles.dart';
+import '../../../theme/colors.dart';
 
 enum NotionCardVariant { elevated, outlined, flat }
 

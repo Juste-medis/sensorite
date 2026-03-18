@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import '../../app/theme/colors.dart';
-import '../../app/theme/text_styles.dart';
+import 'package:nb_utils/nb_utils.dart';
+import 'package:sensorite/presentation/map/mapview.dart';
+import '../../theme/colors.dart';
+import '../../theme/text_styles.dart';
 import '../widgets/common/notion_card.dart';
 import '../widgets/common/notion_header.dart';
 import 'record_screen.dart';
@@ -30,17 +32,17 @@ class HomeScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const NotionHeader(
-              title: 'Navigation à l\'estime',
-              subtitle: 'Analyse de la dérive en tunnel',
-              showDivider: false,
-            ),
-            const SizedBox(height: 24),
+            // const NotionHeader(
+            //   title: 'Navigation à l\'estime',
+            //   subtitle: 'Analyse de la dérive en tunnel',
+            //   showDivider: false,
+            // ),
+            // const SizedBox(height: 24),
+            Expanded(flex: 5, child: SizedBox.expand(child: OSMFlutterMap())),
+            10.height,
             Expanded(
               child: GridView.count(
-                crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
+                crossAxisCount: 4,
                 children: [
                   _buildFeatureCard(
                     context,
@@ -101,22 +103,13 @@ class HomeScreen extends StatelessWidget {
   }) {
     return NotionCard(
       onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, color: color, size: 24),
-          ),
-          const SizedBox(height: 16),
-          Text(title, style: AppTextStyles.bodyLarge),
-          const SizedBox(height: 4),
-          Text(description, style: AppTextStyles.bodySmall),
-        ],
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, color: color, size: 24),
       ),
     );
   }

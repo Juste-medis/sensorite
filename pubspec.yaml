@@ -13,7 +13,7 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # Capteurs
-  sensors_plus: ^4.0.0      # Accès accéléromètre/gyroscope
+  sensors_plus: ^4.0.0 
   
   # Stockage
   path_provider: ^2.1.1     # Chemins de fichiers
@@ -28,7 +28,13 @@ dependencies:
   # Utilitaires
   permission_handler: ^11.0.1 # Permissions
   intl: ^0.18.1             # Formatage dates
-  
+  flutter_map: ^8.2.2
+  latlong2: ^0.9.1
+  location: ^8.0.1
+  nb_utils: ^7.2.0
+
+ 
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

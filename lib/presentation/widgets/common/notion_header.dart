@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:sensorite/presentation/widgets/common/notion_button.dart';
-import '../../../app/theme/colors.dart';
-import '../../../app/theme/text_styles.dart';
+import '../../../theme/colors.dart';
+import '../../../theme/text_styles.dart';
 
 enum NotionHeaderSize { small, medium, large }
 

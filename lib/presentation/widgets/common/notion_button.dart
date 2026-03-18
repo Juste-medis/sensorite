@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../../app/theme/colors.dart';
-import '../../../app/theme/text_styles.dart';
+import '../../../theme/colors.dart';
+import '../../../theme/text_styles.dart';
 
 enum NotionButtonType { primary, secondary, destructive, text }
 

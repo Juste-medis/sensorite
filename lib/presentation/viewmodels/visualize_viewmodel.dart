@@ -5,8 +5,8 @@ import 'package:sensorite/presentation/widgets/common/notion_button.dart';
 import '../../data/services/sensor_service.dart';
 import '../../data/services/file_service.dart';
 import '../../core/models/sensor_data.dart';
-import '../../domain/algorithms/madgwick.dart';
-import '../../domain/algorithms/integrator.dart';
+import '../../algorithms/madgwick.dart';
+import '../../algorithms/integrator.dart';
 
 class VisualizeViewModel extends ChangeNotifier {
   final SensorService _sensorService = SensorService();
