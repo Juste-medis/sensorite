@@ -131,6 +131,7 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
     if (!mounted) return;
 
     if (firstLocation != null) {
+      syncDeadReckoning(firstLocation);
       setState(() => _currentLocation = firstLocation);
     }
 
@@ -145,23 +146,12 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
         _currentLocation = currentLocation;
       });
       if (!Sks.isNetworkAvailable) {
-        currentLocation = interpolPosition(
-          currentLocation,
-          _latestCompleteSensorData ??
-              SensorData(
-                timestamp: DateTime.now(),
-                accelX: 0,
-                accelY: 0,
-                accelZ: 0,
-                gyroX: 0,
-                gyroY: 0,
-                gyroZ: 0,
-              ),
-        );
         myprint(
-          "Interpolated Location: ${currentLocation.latitude}, ${currentLocation.longitude}, heading: ${currentLocation.heading}",
+          "Offline mode active, interpolation driven by timer.",
         );
       } else {
+        // Re-anchor dead-reckoning state as soon as a fresh online fix arrives.
+        syncDeadReckoning(currentLocation);
         myprint(
           "Real Location: ${currentLocation.latitude}, ${currentLocation.longitude}, heading: ${currentLocation.heading}",
         );
@@ -172,7 +162,7 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
       });
       widget.onRealtimeData?.call(currentLocation, _latestCompleteSensorData);
       myprint(
-        "Sensor Data: accel=(${_latestCompleteSensorData?.accelX}, ${_latestCompleteSensorData?.accelY}, ${_latestCompleteSensorData?.accelZ}), gyro=(${_latestCompleteSensorData?.gyroX}, ${_latestCompleteSensorData?.gyroY}, ${_latestCompleteSensorData?.gyroZ})",
+        "Sensor Data: accel=(${_latestCompleteSensorData?.accelX}, ${_latestCompleteSensorData?.  accelY}, ${_latestCompleteSensorData?.accelZ}), gyro=(${_latestCompleteSensorData?.gyroX}, ${_latestCompleteSensorData?.gyroY}, ${_latestCompleteSensorData?.gyroZ})",
       );
       final currentPoint = LatLng(
         currentLocation.latitude!,
