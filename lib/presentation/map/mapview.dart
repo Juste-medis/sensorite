@@ -12,8 +12,6 @@ import 'package:sensorite/data/mode_key.dart';
 import 'package:sensorite/presentation/map/marker.dart';
 import 'package:sensorite/data/services/fake_service.dart';
 import 'package:sensorite/data/services/sensor_service.dart';
-import 'package:sensorite/presentation/viewmodels/recording_viewmodel.dart';
-import 'package:provider/provider.dart';
 
 class OSMFlutterMap extends StatefulWidget {
   final void Function(loc.LocationData location, SensorData? sensorData)?
@@ -25,198 +23,209 @@ class OSMFlutterMap extends StatefulWidget {
   State<OSMFlutterMap> createState() => _OSMFlutterMapState();
 }
 
-class _OSMFlutterMapState extends State<OSMFlutterMap> {
+class _OSMFlutterMapState extends State<OSMFlutterMap> with ChangeNotifier {
   final MapController _mapController = MapController();
   final loc.Location _location = loc.Location();
   final SensorService _sensorService = SensorService();
+  final NavigateurUniversel _NavigateurUniversel = NavigateurUniversel();
 
   loc.LocationData? _currentLocation;
   StreamSubscription<loc.LocationData>? _locationSub;
-  StreamSubscription<SensorData>? _sensorSub;
   Timer? _interpolationTimer;
+  Timer? _trackingTimer;
 
-  SensorData? _latestAccel;
-  SensorData? _latestGyro;
-  SensorData? _latestCompleteSensorData;
   bool _hasCentered = false;
+  bool _isOfflineMode = false;
 
   @override
   void initState() {
     super.initState();
-    _startSensorFusion();
-    _startInterpolationLoop();
-    _initializeViewModel();
+    _isOfflineMode = !Sks.isNetworkAvailable;
+    initializeSensor();
     _startRealtimeLocation();
+    _startTracking();
   }
 
-  @override
-  void dispose() {
-    _locationSub?.cancel();
-    _sensorSub?.cancel();
-    _interpolationTimer?.cancel();
-    super.dispose();
-  }
+  Future<void> _startTracking() async {
+    _trackingTimer = Timer.periodic(const Duration(milliseconds: 300), (
+      _,
+    ) async {
+      final shouldBeOffline = !Sks.isNetworkAvailable;
 
-  void _startSensorFusion() {
-    _sensorSub = _sensorService.sensorDataStream.listen((SensorData data) {
-      final hasAccel =
-          data.accelX != null && data.accelY != null && data.accelZ != null;
-      final hasGyro =
-          data.gyroX != null && data.gyroY != null && data.gyroZ != null;
+      if (shouldBeOffline == _isOfflineMode) return;
 
-      if (hasAccel) {
-        _latestAccel = data;
-      }
+      if (!mounted) return;
+      setState(() {
+        _isOfflineMode = shouldBeOffline;
+      });
 
-      if (hasGyro) {
-        _latestGyro = data;
-      }
-
-      if (_latestAccel != null && _latestGyro != null) {
-        _latestCompleteSensorData = SensorData(
-          timestamp: data.timestamp,
-          accelX: _latestAccel!.accelX,
-          accelY: _latestAccel!.accelY,
-          accelZ: _latestAccel!.accelZ,
-          gyroX: _latestGyro!.gyroX,
-          gyroY: _latestGyro!.gyroY,
-          gyroZ: _latestGyro!.gyroZ,
-        );
-
-        final location = _currentLocation;
-        if (location != null) {
-          widget.onRealtimeData?.call(location, _latestCompleteSensorData);
-        }
+      if (_isOfflineMode) {
+        _locationSub?.cancel();
+        _locationSub = null;
+        _startInterpolationLoop();
+      } else {
+        _interpolationTimer?.cancel();
+        _interpolationTimer = null;
+        _startRealtimeLocation();
       }
     });
   }
 
-  void _startInterpolationLoop() {
+  Future<void> _startInterpolationLoop() async {
+    if (_interpolationTimer != null) return;
+
     _interpolationTimer = Timer.periodic(const Duration(milliseconds: 200), (
       _,
-    ) {
-      if (Sks.isNetworkAvailable) return;
-
+    ) async {
       final currentLocation = _currentLocation;
-      final sensorData = _latestCompleteSensorData;
+      final sensorData =
+          _sensorService.latestCompleteSensorData; //getFusedSensorData();
 
       if (currentLocation == null || sensorData == null) return;
       if (currentLocation.latitude == null ||
           currentLocation.longitude == null) {
         return;
       }
-
-      final interpolatedLocation = interpolPosition(
-        currentLocation,
-        sensorData,
+      final interpolatedLocation =
+          _NavigateurUniversel.calculerNouvellePosition(
+            positionActuelle: currentLocation,
+            donneesCapteurs: sensorData,
+          );
+      myprint(
+        "Interpolated : ${interpolatedLocation.latitude}, ${interpolatedLocation.longitude}, heading: ${interpolatedLocation.heading}",
       );
-      if (!mounted) return;
-      setState(() {
-        _currentLocation = interpolatedLocation;
-      });
-      widget.onRealtimeData?.call(interpolatedLocation, sensorData);
+      propagatePosition(interpolatedLocation);
     });
   }
 
-  Future<void> _initializeViewModel() async {
-    final viewModel = Provider.of<RecordingViewModel>(context, listen: false);
-    await viewModel.initialize();
-
-    final customName = "recording_${DateTime.now().millisecondsSinceEpoch}";
-    await viewModel.startRecording(customName: customName);
-  }
-
   Future<void> _startRealtimeLocation() async {
-    final firstLocation = await getLocationCoordinates();
-    if (!mounted) return;
-
-    if (firstLocation != null) {
-      setState(() => _currentLocation = firstLocation);
-    }
+    if (_locationSub != null) return;
 
     _locationSub = _location.onLocationChanged.listen((
       loc.LocationData currentLocation,
     ) {
       if (!mounted) return;
-      if (currentLocation.latitude == null || currentLocation.longitude == null)
+      if (_isOfflineMode) return;
+      if (currentLocation.latitude == null ||
+          currentLocation.longitude == null) {
         return;
-
-      setState(() {
-        _currentLocation = currentLocation;
-      });
-      if (!Sks.isNetworkAvailable) {
-        currentLocation = interpolPosition(
-          currentLocation,
-          _latestCompleteSensorData ??
-              SensorData(
-                timestamp: DateTime.now(),
-                accelX: 0,
-                accelY: 0,
-                accelZ: 0,
-                gyroX: 0,
-                gyroY: 0,
-                gyroZ: 0,
-              ),
-        );
-        myprint(
-          "Interpolated Location: ${currentLocation.latitude}, ${currentLocation.longitude}, heading: ${currentLocation.heading}",
-        );
-      } else {
-        myprint(
-          "Real Location: ${currentLocation.latitude}, ${currentLocation.longitude}, heading: ${currentLocation.heading}",
-        );
       }
-
-      setState(() {
-        _currentLocation = currentLocation;
-      });
-      widget.onRealtimeData?.call(currentLocation, _latestCompleteSensorData);
       myprint(
-        "Sensor Data: accel=(${_latestCompleteSensorData?.accelX}, ${_latestCompleteSensorData?.accelY}, ${_latestCompleteSensorData?.accelZ}), gyro=(${_latestCompleteSensorData?.gyroX}, ${_latestCompleteSensorData?.gyroY}, ${_latestCompleteSensorData?.gyroZ})",
+        " real: ${currentLocation.latitude}, ${currentLocation.longitude}, ${currentLocation.heading}",
       );
-      final currentPoint = LatLng(
-        currentLocation.latitude!,
-        currentLocation.longitude!,
-      );
-
-      // Recentre la carte une seule fois au premier fix
-      if (!_hasCentered) {
-        _mapController.move(currentPoint, 18);
-        _hasCentered = true;
-      }
+      propagatePosition(currentLocation);
     });
   }
+
+  void propagatePosition(loc.LocationData currentLocation) {
+    setState(() {
+      _currentLocation = currentLocation;
+    });
+
+    widget.onRealtimeData?.call(
+      currentLocation,
+      _sensorService.latestCompleteSensorData,
+    );
+
+    final currentPoint = LatLng(
+      currentLocation.latitude!,
+      currentLocation.longitude!,
+    );
+
+    // Recentre la carte une seule fois au premier fix
+    if (!_hasCentered) {
+      _mapController.move(currentPoint, 18);
+      _hasCentered = true;
+    }
+  }
+
+  ///=========================Senseurite core logic================================================================
+
+  Future<void> initializeSensor() async {
+    _sensorService.startRecording();
+    _sensorService.onDataReceived = (SensorData data) {
+      myprint(
+        "Handling sensor data: accel=(${data.accelX}, ${data.accelY}, ${data.accelZ}), "
+        "gyro=(${data.gyroX}, ${data.gyroY}, ${data.gyroZ}), timestamp=${data.timestamp}",
+      );
+    };
+    _sensorService.onStatusChanged = () {
+      notifyListeners();
+    };
+    await _sensorService.initialize();
+    await _sensorService.startSensorFusion();
+    notifyListeners();
+  }
+
+  ///=========================Senseurite core logic================================================================
 
   @override
   Widget build(BuildContext context) {
     final lat = _currentLocation?.latitude;
     final lng = _currentLocation?.longitude;
     final heading = _currentLocation?.heading ?? 0.0;
+    final modeColor = _isOfflineMode
+        ? Theme.of(context).colorScheme.error
+        : Theme.of(context).colorScheme.primary;
+    final modeLabel = _isOfflineMode ? 'OFFLINE' : 'ONLINE';
 
-    return FlutterMap(
-      mapController: _mapController,
-      options: MapOptions(
-        initialCenter: LatLng(lat ?? 0.0, lng ?? 0.0),
-        initialZoom: 20,
-      ),
+    return Stack(
       children: [
-        TileLayer(
-          urlTemplate: 'http://82.29.175.22:8080/tile/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.sensorite.map.sensorite',
-        ),
-        if (lat != null && lng != null)
-          MarkerLayer(
-            markers: [
-              Marker(
-                point: LatLng(lat, lng),
-                width: 20,
-                height: 20,
-                child: RealtimeUserMarker(heading: heading),
-              ),
-            ],
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: LatLng(lat ?? 0.0, lng ?? 0.0),
+            initialZoom: 20,
           ),
+          children: [
+            TileLayer(
+              urlTemplate: 'http://82.29.175.22:8080/tile/{z}/{x}/{y}.png',
+              userAgentPackageName: 'com.sensorite.map.sensorite',
+            ),
+            if (lat != null && lng != null)
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: LatLng(lat, lng),
+                    width: 20,
+                    height: 20,
+                    child: RealtimeUserMarker(heading: heading),
+                  ),
+                ],
+              ),
+          ],
+        ),
+        Positioned(
+          top: 12,
+          right: 12,
+          child: IgnorePointer(
+            child: FilledButton.icon(
+              onPressed: null,
+              style: FilledButton.styleFrom(
+                disabledBackgroundColor: modeColor,
+                disabledForegroundColor: Theme.of(
+                  context,
+                ).colorScheme.onPrimary,
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: Icon(
+                _isOfflineMode ? Icons.cloud_off : Icons.cloud_done,
+                size: 16,
+              ),
+              label: Text(modeLabel),
+            ),
+          ),
+        ),
       ],
     );
+  }
+
+  @override
+  void dispose() {
+    _locationSub?.cancel();
+    _interpolationTimer?.cancel();
+    _trackingTimer?.cancel();
+    super.dispose();
   }
 }
 

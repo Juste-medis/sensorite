@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:location/location.dart' as loc;
+import 'package:nb_utils/nb_utils.dart';
 import 'package:sensorite/core/models/sensor_data.dart';
+import 'package:sensorite/core/utils/utls.dart';
 import 'package:sensorite/presentation/map/mapview.dart';
 import 'settings_screen.dart';
 
@@ -97,6 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         Text(
                           'Gyro: x=${_fmt(sensor?.gyroX, digits: 3)}, y=${_fmt(sensor?.gyroY, digits: 3)}, z=${_fmt(sensor?.gyroZ, digits: 3)}',
                         ),
+                        50.height,
                       ],
                     ),
                   ),

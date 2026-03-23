@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../data/services/file_service.dart';
 
 class SettingsViewModel extends ChangeNotifier {
-  final FileService _fileService = FileService();
-
   // Thème
   bool _darkMode = false;
 
@@ -38,34 +35,11 @@ class SettingsViewModel extends ChangeNotifier {
 
   SettingsViewModel() {
     _loadSettings();
-    _loadStorageInfo();
   }
 
   Future<void> _loadSettings() async {
     // À implémenter : charger depuis SharedPreferences
     notifyListeners();
-  }
-
-  Future<void> _loadStorageInfo() async {
-    try {
-      await _fileService.initialize();
-
-      // Chemin de stockage
-      final dir = await _fileService.getRecordsDirectory();
-      _storagePath = dir.path;
-
-      // Espace disponible (simplifié)
-      // À implémenter avec des stats du système de fichiers
-      _availableSpace = '> 100 MB';
-
-      // Nombre d'enregistrements
-      final files = await _fileService.listRecordings();
-      _recordingsCount = files.length;
-
-      notifyListeners();
-    } catch (e) {
-      print('Error loading storage info: $e');
-    }
   }
 
   // Setters
@@ -124,7 +98,6 @@ class SettingsViewModel extends ChangeNotifier {
   Future<void> cleanOldRecordings() async {
     // À implémenter : supprimer les vieux fichiers
     // Par exemple : garder seulement les 10 derniers
-    await _loadStorageInfo();
   }
 
   void resetToDefaults() {

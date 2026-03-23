@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:sensorite/core/utils/utls.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import '../../core/models/sensor_data.dart';
 import '../../core/utils/timestamp_helper.dart';
@@ -17,6 +18,7 @@ class SensorService {
       StreamController<AccelerometerEvent>.broadcast();
   final _gyroscopeController = StreamController<GyroscopeEvent>.broadcast();
   final _sensorDataController = StreamController<SensorData>.broadcast();
+  SensorData? _latestCompleteSensorData;
 
   // Subscriptions
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
@@ -27,8 +29,12 @@ class SensorService {
   DateTime? _recordingStartTime;
   int _sampleCount = 0;
 
+  SensorData? latestAccel;
+  SensorData? latestGyro;
+
   // Getters
   Stream<SensorData> get sensorDataStream => _sensorDataController.stream;
+  SensorData? get latestCompleteSensorData => _latestCompleteSensorData;
   Stream<AccelerometerEvent> get accelerometerStream =>
       _accelerometerController.stream;
   Stream<GyroscopeEvent> get gyroscopeStream => _gyroscopeController.stream;
@@ -38,7 +44,7 @@ class SensorService {
 
   // Callbacks pour l'UI
   VoidCallback? onStatusChanged;
-  VoidCallback? onDataReceived;
+  ValueChanged<SensorData>? onDataReceived;
 
   /// Initialise les écouteurs capteurs
   Future<void> initialize() async {
@@ -61,38 +67,39 @@ class SensorService {
 
     if (_status == SensorStatus.recording) {
       _sampleCount++;
-      _sensorDataController.add(
-        SensorData(
-          timestamp: TimestampHelper.now(),
-          accelX: event.x,
-          accelY: event.y,
-          accelZ: event.z,
-          gyroX: null, // Sera rempli par le gyroscope
-          gyroY: null,
-          gyroZ: null,
-        ),
+
+      latestAccel = SensorData(
+        timestamp: TimestampHelper.now(),
+        accelX: event.x,
+        accelY: event.y,
+        accelZ: event.z,
+        gyroX: null,
+        gyroY: null,
+        gyroZ: null,
       );
-      onDataReceived?.call();
+      _sensorDataController.add(latestAccel!);
+      onDataReceived?.call(latestAccel!);
     }
   }
 
   void _handleGyroscopeEvent(GyroscopeEvent event) {
     _gyroscopeController.add(event);
 
+    myprintnet(
+      "  Handling gyroscope event: x=${event.x}, y=${event.y}, z=${event.z}, status=$_status",
+    );
     if (_status == SensorStatus.recording) {
-      // Idéalement on synchronise avec l'accéléromètre
-      // Version simplifiée : on ajoute une entrée gyro seule
-      _sensorDataController.add(
-        SensorData(
-          timestamp: TimestampHelper.now(),
-          accelX: null,
-          accelY: null,
-          accelZ: null,
-          gyroX: event.x,
-          gyroY: event.y,
-          gyroZ: event.z,
-        ),
+      latestGyro = SensorData(
+        timestamp: TimestampHelper.now(),
+        accelX: null,
+        accelY: null,
+        accelZ: null,
+        gyroX: event.x,
+        gyroY: event.y,
+        gyroZ: event.z,
       );
+      _sensorDataController.add(latestGyro!);
+      onDataReceived?.call(latestGyro!);
     }
   }
 
@@ -143,5 +150,29 @@ class SensorService {
     _accelerometerController.close();
     _gyroscopeController.close();
     _sensorDataController.close();
+  }
+
+  // fusion sensors
+  Future<void> startSensorFusion() async {
+    sensorDataStream.listen(
+      (SensorData data) {
+        myprint(
+          'Fusiongyrox = ${latestGyro?.gyroX}, accelX = ${latestAccel?.accelX}, timestamp: ${data.timestamp.toIso8601String()}',
+        );
+        _latestCompleteSensorData = SensorData(
+          timestamp: data.timestamp,
+          accelX: latestAccel?.accelX,
+          accelY: latestAccel?.accelY,
+          accelZ: latestAccel?.accelZ,
+          gyroX: latestGyro?.gyroX,
+          gyroY: latestGyro?.gyroY,
+          gyroZ: latestGyro?.gyroZ,
+        );
+        onDataReceived?.call(_latestCompleteSensorData!);
+      },
+      onError: (error) {
+        my_print_err("Error in sensor fusion: $error");
+      },
+    );
   }
 }
