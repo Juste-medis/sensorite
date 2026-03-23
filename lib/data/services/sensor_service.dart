@@ -85,9 +85,6 @@ class SensorService {
   void _handleGyroscopeEvent(GyroscopeEvent event) {
     _gyroscopeController.add(event);
 
-    myprintnet(
-      "  Handling gyroscope event: x=${event.x}, y=${event.y}, z=${event.z}, status=$_status",
-    );
     if (_status == SensorStatus.recording) {
       latestGyro = SensorData(
         timestamp: TimestampHelper.now(),
