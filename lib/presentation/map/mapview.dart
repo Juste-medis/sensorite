@@ -9,9 +9,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:sensorite/core/utils/utls.dart';
 import 'package:sensorite/core/models/sensor_data.dart';
-import 'package:sensorite/data/mode_key.dart';
 import 'package:sensorite/presentation/map/marker.dart';
 import 'package:sensorite/data/services/fake_service.dart';
+import 'package:sensorite/data/services/vs_comparison_storage.dart';
 import 'package:sensorite/presentation/viewmodels/recording_viewmodel.dart';
 import 'package:provider/provider.dart';
 
@@ -38,24 +38,30 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
   SensorData? _latestAccel;
   SensorData? _latestGyro;
   SensorData? _latestCompleteSensorData;
+
   bool _hasCentered = false;
   DateTime? _lastGpsUpdateTime;
-  double _lastValidGpsHeading = 0.0; // dernier cap GPS fiable (vitesse suffisante)
+  double _lastValidGpsHeading = 0.0;
+  bool _isDrMode = false;
 
-  // Traces pour comparaison GPS vs dead-reckoning
-  final List<LatLng> _gpsTrack = [];
-  final List<LatLng> _drTrack = [];
+  // Instance DR unique
+  final _dr = DeadReckoning();
+
+  // Tracés
   static const int _maxTrackPoints = 500;
+  final List<LatLng> _gpsTrack = [];
+  final List<LatLng> _drTrack  = []; // violet, actif en GPS perdu ET en VS
 
-  // Mode VS : DR tourne en parallèle du GPS sans correction
+  // Mode VS
   bool _vsMode = false;
-  loc.LocationData? _drLocation;
+  loc.LocationData? _drVsLocation; // position DR indépendante en VS
+  final VsComparisonStorage _storage = VsComparisonStorage();
 
   @override
   void initState() {
     super.initState();
     _startSensorFusion();
-    _startInterpolationLoop();
+    _startDrLoop();
     _initializeViewModel();
     _startRealtimeLocation();
   }
@@ -70,154 +76,153 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
   }
 
   void _startSensorFusion() {
-    _accelSub = accelerometerEventStream().listen((AccelerometerEvent event) {
+    _accelSub = accelerometerEventStream().listen((e) {
       _latestAccel = SensorData(
         timestamp: DateTime.now(),
-        accelX: event.x,
-        accelY: event.y,
-        accelZ: event.z,
+        accelX: e.x, accelY: e.y, accelZ: e.z,
       );
-      _tryFuseSensors();
+      _tryFuse();
     });
-
-    _gyroSub = gyroscopeEventStream().listen((GyroscopeEvent event) {
+    _gyroSub = gyroscopeEventStream().listen((e) {
       _latestGyro = SensorData(
         timestamp: DateTime.now(),
-        gyroX: event.x,
-        gyroY: event.y,
-        gyroZ: event.z,
+        gyroX: e.x, gyroY: e.y, gyroZ: e.z,
       );
-      _tryFuseSensors();
+      _tryFuse();
     });
   }
 
-  void _tryFuseSensors() {
+  void _tryFuse() {
     if (_latestAccel == null || _latestGyro == null) return;
     _latestCompleteSensorData = SensorData(
       timestamp: DateTime.now(),
-      accelX: _latestAccel!.accelX,
-      accelY: _latestAccel!.accelY,
-      accelZ: _latestAccel!.accelZ,
-      gyroX: _latestGyro!.gyroX,
-      gyroY: _latestGyro!.gyroY,
-      gyroZ: _latestGyro!.gyroZ,
+      accelX: _latestAccel!.accelX, accelY: _latestAccel!.accelY, accelZ: _latestAccel!.accelZ,
+      gyroX:  _latestGyro!.gyroX,  gyroY:  _latestGyro!.gyroY,  gyroZ:  _latestGyro!.gyroZ,
     );
-
-    final location = _currentLocation;
-    if (location != null) {
-      widget.onRealtimeData?.call(location, _latestCompleteSensorData);
-    }
+    final l = _currentLocation;
+    if (l != null) widget.onRealtimeData?.call(l, _latestCompleteSensorData);
   }
 
-  void _startInterpolationLoop() {
+  void _startDrLoop() {
     _interpolationTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
-      final sensorData = _latestCompleteSensorData;
-      if (sensorData == null) return;
+      final sensors = _latestCompleteSensorData;
+      if (sensors == null) return;
+
+      final gpsAge  = _lastGpsUpdateTime == null
+          ? null
+          : DateTime.now().difference(_lastGpsUpdateTime!);
+      final gpsLost = gpsAge == null || gpsAge > const Duration(seconds: 5);
 
       if (_vsMode) {
-        // Mode VS : DR tourne librement sans jamais être corrigé par le GPS
-        final base = _drLocation ?? _currentLocation;
-        if (base == null || base.latitude == null || base.longitude == null) return;
-
-        final predicted = interpolPosition(base, sensorData);
+        // VS : DR tourne indépendamment du GPS (position séparée)
+        final base = _drVsLocation ?? _currentLocation;
+        if (base?.latitude == null || base?.longitude == null) return;
+        final predicted = _dr.predict(base!, sensors);
         if (!mounted) return;
         _drTrack.add(LatLng(predicted.latitude!, predicted.longitude!));
         if (_drTrack.length > _maxTrackPoints) _drTrack.removeAt(0);
-        setState(() => _drLocation = predicted);
-      } else {
-        // Mode normal : DR uniquement quand le GPS est perdu
-        final gpsAge = _lastGpsUpdateTime == null
-            ? null
-            : DateTime.now().difference(_lastGpsUpdateTime!);
-        if (gpsAge != null && gpsAge < const Duration(seconds: 1)) return;
+        setState(() => _drVsLocation = predicted);
 
-        final currentLocation = _currentLocation;
-        if (currentLocation == null ||
-            currentLocation.latitude == null ||
-            currentLocation.longitude == null) return;
-
-        final interpolatedLocation = interpolPosition(currentLocation, sensorData);
+        // Enregistrement comparaison
+        final gps = _currentLocation;
+        if (gps?.latitude != null) {
+          _storage.record(
+            gpsLat: gps!.latitude!, gpsLng: gps.longitude!,
+            pdrLat: predicted.latitude!, pdrLng: predicted.longitude!,
+            diLat: predicted.latitude!,  diLng: predicted.longitude!,
+          );
+        }
+      } else if (gpsLost) {
+        // GPS perdu : DR remplace le GPS (même marqueur)
+        final cur = _currentLocation;
+        if (cur?.latitude == null || cur?.longitude == null) return;
+        final predicted = _dr.predict(cur!, sensors);
         if (!mounted) return;
-        _drTrack.add(LatLng(interpolatedLocation.latitude!, interpolatedLocation.longitude!));
+        _drTrack.add(LatLng(predicted.latitude!, predicted.longitude!));
         if (_drTrack.length > _maxTrackPoints) _drTrack.removeAt(0);
-        setState(() => _currentLocation = interpolatedLocation);
-        widget.onRealtimeData?.call(interpolatedLocation, sensorData);
+        setState(() {
+          _currentLocation = predicted;
+          _isDrMode = true;
+        });
+        widget.onRealtimeData?.call(predicted, sensors);
       }
     });
   }
 
-  void _toggleVsMode() {
-    setState(() {
-      _vsMode = !_vsMode;
-      if (_vsMode) {
-        // Ancrer le DR sur la position GPS actuelle, le cap est déjà bon (GPS le maintient)
-        _drTrack.clear();
-        _drLocation = _currentLocation;
-      } else {
-        _drLocation = null;
-        _drTrack.clear();
+  void _toggleVsMode() async {
+    if (_vsMode) {
+      final count = _storage.length;
+      String? path;
+      if (count > 0) {
+        try { path = await _storage.saveToFile(); } catch (_) {}
+        _storage.clear();
       }
-    });
+      setState(() {
+        _vsMode = false;
+        _drVsLocation = null;
+        _drTrack.clear();
+      });
+      if (mounted && path != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$count points → $path'),
+          duration: const Duration(seconds: 6),
+        ));
+      }
+    } else {
+      _dr.reset();
+      if (_currentLocation != null) _dr.sync(_currentLocation!);
+      setState(() {
+        _vsMode = true;
+        _drTrack.clear();
+        _drVsLocation = _currentLocation;
+      });
+    }
   }
 
   Future<void> _initializeViewModel() async {
-    final viewModel = Provider.of<RecordingViewModel>(context, listen: false);
-    await viewModel.initialize();
-
-    final customName = "recording_${DateTime.now().millisecondsSinceEpoch}";
-    await viewModel.startRecording(customName: customName);
+    final vm = Provider.of<RecordingViewModel>(context, listen: false);
+    await vm.initialize();
+    await vm.startRecording(customName: 'recording_${DateTime.now().millisecondsSinceEpoch}');
   }
 
   Future<void> _startRealtimeLocation() async {
-    final firstLocation = await getLocationCoordinates();
+    final first = await getLocationCoordinates();
     if (!mounted) return;
-
-    if (firstLocation != null) {
-      syncDeadReckoning(firstLocation);
-      setState(() => _currentLocation = firstLocation);
+    if (first != null) {
+      _dr.sync(first);
+      setState(() => _currentLocation = first);
     }
 
-    _locationSub = _location.onLocationChanged.listen((
-      loc.LocationData currentLocation,
-    ) {
+    _locationSub = _location.onLocationChanged.listen((cur) {
       if (!mounted) return;
-      if (currentLocation.latitude == null || currentLocation.longitude == null)
-        return;
+      if (cur.latitude == null || cur.longitude == null) return;
 
       _lastGpsUpdateTime = DateTime.now();
-      syncDeadReckoning(currentLocation);
-      // Ne garder le cap GPS que si la vitesse est suffisante (évite les resets à 0 à l'arrêt)
-      final spd = currentLocation.speed ?? 0.0;
-      final hdg = currentLocation.heading ?? 0.0;
-      if (spd > 0.5 && hdg.isFinite) _lastValidGpsHeading = hdg;
-      _gpsTrack.add(LatLng(currentLocation.latitude!, currentLocation.longitude!));
-      if (_gpsTrack.length > _maxTrackPoints) _gpsTrack.removeAt(0);
-      setState(() {
-        _currentLocation = currentLocation;
-      });
-      if (!Sks.isNetworkAvailable) {
-        myprint("Offline mode active, interpolation driven by timer.");
+
+      // En VS : correction cap seulement (vitesse libre)
+      // Hors VS : sync complet pour être prêt si GPS se perd
+      if (_vsMode) {
+        _dr.syncHeadingOnly(cur);
       } else {
-        myprint(
-          "Real Location: ${currentLocation.latitude}, ${currentLocation.longitude}, heading: ${currentLocation.heading}",
-        );
+        _dr.sync(cur);
       }
 
-      setState(() {
-        _currentLocation = currentLocation;
-      });
-      widget.onRealtimeData?.call(currentLocation, _latestCompleteSensorData);
-      myprint(
-        "Sensor Data: accel=(${_latestCompleteSensorData?.accelX}, ${_latestCompleteSensorData?.  accelY}, ${_latestCompleteSensorData?.accelZ}), gyro=(${_latestCompleteSensorData?.gyroX}, ${_latestCompleteSensorData?.gyroY}, ${_latestCompleteSensorData?.gyroZ})",
-      );
-      final currentPoint = LatLng(
-        currentLocation.latitude!,
-        currentLocation.longitude!,
-      );
+      final spd = cur.speed ?? 0.0;
+      final hdg = cur.heading ?? 0.0;
+      if (spd > 0.5 && hdg.isFinite) _lastValidGpsHeading = hdg;
 
-      // Recentre la carte une seule fois au premier fix
+      _gpsTrack.add(LatLng(cur.latitude!, cur.longitude!));
+      if (_gpsTrack.length > _maxTrackPoints) _gpsTrack.removeAt(0);
+
+      setState(() {
+        _currentLocation = cur;
+        _isDrMode = false;
+      });
+      widget.onRealtimeData?.call(cur, _latestCompleteSensorData);
+      myprint('GPS: ${cur.latitude?.toStringAsFixed(6)}, spd=${cur.speed?.toStringAsFixed(1)} m/s');
+
       if (!_hasCentered) {
-        _mapController.move(currentPoint, 18);
+        _mapController.move(LatLng(cur.latitude!, cur.longitude!), 18);
         _hasCentered = true;
       }
     });
@@ -227,11 +232,9 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
   Widget build(BuildContext context) {
     final lat = _currentLocation?.latitude;
     final lng = _currentLocation?.longitude;
-    final heading = _lastValidGpsHeading;
-
-    final drLat = _drLocation?.latitude;
-    final drLng = _drLocation?.longitude;
-    final drHeading = _drLocation?.heading ?? 0.0;
+    final drLat = _drVsLocation?.latitude;
+    final drLng = _drVsLocation?.longitude;
+    final drHdg = _drVsLocation?.heading ?? 0.0;
 
     return Stack(
       children: [
@@ -247,56 +250,85 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
               userAgentPackageName: 'com.sensorite.map.sensorite',
             ),
             if (_gpsTrack.length > 1)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: _gpsTrack,
-                    color: Colors.blue,
-                    strokeWidth: 3.0,
-                  ),
-                ],
-              ),
+              PolylineLayer(polylines: [
+                Polyline(points: _gpsTrack, color: Colors.blue, strokeWidth: 3),
+              ]),
             if (_drTrack.length > 1)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: _drTrack,
-                    color: Colors.orange,
-                    strokeWidth: 3.0,
+              PolylineLayer(polylines: [
+                Polyline(points: _drTrack, color: Colors.purple, strokeWidth: 3),
+              ]),
+            MarkerLayer(markers: [
+              // Marqueur principal (GPS ou DR quand perdu)
+              if (lat != null && lng != null)
+                Marker(
+                  point: LatLng(lat, lng),
+                  width: 56, height: 56,
+                  child: RealtimeUserMarker(
+                    heading: _isDrMode
+                        ? (_currentLocation?.heading ?? _lastValidGpsHeading)
+                        : _lastValidGpsHeading,
+                    color: _isDrMode ? Colors.purple : const Color(0xFF007AFF),
                   ),
-                ],
-              ),
-            MarkerLayer(
-              markers: [
-                if (lat != null && lng != null)
-                  Marker(
-                    point: LatLng(lat, lng),
-                    width: 56,
-                    height: 56,
-                    child: RealtimeUserMarker(heading: heading),
-                  ),
-                if (_vsMode && drLat != null && drLng != null)
-                  Marker(
-                    point: LatLng(drLat, drLng),
-                    width: 56,
-                    height: 56,
-                    child: RealtimeUserMarker(
-                      heading: drHeading,
-                      color: Colors.orange,
-                    ),
-                  ),
-              ],
-            ),
+                ),
+              // Marqueur DR indépendant (VS uniquement)
+              if (_vsMode && drLat != null && drLng != null)
+                Marker(
+                  point: LatLng(drLat, drLng),
+                  width: 56, height: 56,
+                  child: RealtimeUserMarker(heading: drHdg, color: Colors.purple),
+                ),
+            ]),
           ],
         ),
+
+        // Bandeau GPS perdu
+        if (_isDrMode && !_vsMode)
+          Positioned(
+            top: 0, left: 0, right: 0,
+            child: Material(
+              color: Colors.purple.shade700,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.gps_off, color: Colors.white, size: 16),
+                    SizedBox(width: 6),
+                    Text('PRÉDICTION — GPS perdu',
+                        style: TextStyle(color: Colors.white,
+                            fontWeight: FontWeight.bold, fontSize: 13)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+        // Légende VS
+        if (_vsMode)
+          Positioned(
+            top: 12, left: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                  color: Colors.black54, borderRadius: BorderRadius.circular(8)),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _LegendItem(color: Colors.blue,   label: 'GPS (réel)'),
+                  SizedBox(height: 4),
+                  _LegendItem(color: Colors.purple, label: 'DR (prédiction)'),
+                ],
+              ),
+            ),
+          ),
+
         Positioned(
-          bottom: 24,
-          right: 16,
+          bottom: 24, right: 16,
           child: FloatingActionButton.extended(
             onPressed: _toggleVsMode,
-            backgroundColor: _vsMode ? Colors.orange : Colors.blueGrey,
-            icon: Icon(_vsMode ? Icons.pause : Icons.compare_arrows),
-            label: Text(_vsMode ? 'VS ON' : 'VS'),
+            backgroundColor: _vsMode ? Colors.purple : Colors.blueGrey,
+            icon: Icon(_vsMode ? Icons.stop : Icons.compare_arrows),
+            label: Text(_vsMode ? 'VS (${_storage.length}pts)' : 'VS'),
           ),
         ),
       ],
@@ -304,34 +336,41 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
   }
 }
 
-Future<loc.LocationData?> getLocationCoordinates() async {
-  loc.Location location = loc.Location();
-  try {
-    bool serviceEnabled = await location.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await location.requestService();
-      if (!serviceEnabled) {
-        throw Exception("Location services are disabled.");
-      }
-    }
+class _LegendItem extends StatelessWidget {
+  final Color color;
+  final String label;
+  const _LegendItem({required this.color, required this.label});
 
-    final coordinates = await location.getLocation();
-    return coordinates;
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(width: 16, height: 4, color: color),
+      const SizedBox(width: 6),
+      Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+    ],
+  );
+}
+
+Future<loc.LocationData?> getLocationCoordinates() async {
+  final location = loc.Location();
+  try {
+    bool ok = await location.serviceEnabled();
+    if (!ok) {
+      ok = await location.requestService();
+      if (!ok) throw Exception('Location services disabled.');
+    }
+    return await location.getLocation();
   } catch (e) {
     if (e is PlatformException) {
-      loc.PermissionStatus permissionGranted = await location.hasPermission();
-
-      if (e.code == "PERMISSION_DENIED_NEVER_ASK") {
+      final perm = await location.hasPermission();
+      if (e.code == 'PERMISSION_DENIED_NEVER_ASK') {
         await openAppSettings();
-        throw Exception("Permission denied forever. Redirected to settings.");
-      } else if (permissionGranted == loc.PermissionStatus.denied) {
-        permissionGranted = await location.requestPermission();
-        if (permissionGranted != loc.PermissionStatus.granted) {
-          throw Exception("Location permission denied.");
-        }
+      } else if (perm == loc.PermissionStatus.denied) {
+        final granted = await location.requestPermission();
+        if (granted != loc.PermissionStatus.granted) return null;
       }
     }
-
     return null;
   }
 }
