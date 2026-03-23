@@ -2,12 +2,10 @@ import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../data/services/sensor_service.dart';
-import '../../data/services/file_service.dart';
 import '../../core/models/sensor_data.dart';
 
 class RecordingViewModel extends ChangeNotifier {
   final SensorService _sensorService = SensorService();
-  final FileService _fileService = FileService();
 
   // État
   bool _isInitialized = false;
@@ -33,8 +31,7 @@ class RecordingViewModel extends ChangeNotifier {
   Future<void> initialize() async {
     if (_isInitialized) return;
 
-    await _fileService.initialize();
-    _sensorService.onDataReceived = () => _handleSensorData;
+    // _sensorService.onDataReceived = _handleSensorData;
     _sensorService.onStatusChanged = _handleStatusChange;
     await _sensorService.initialize();
 
@@ -52,9 +49,6 @@ class RecordingViewModel extends ChangeNotifier {
   /// Démarrer un nouvel enregistrement
   Future<void> startRecording({String? customName}) async {
     try {
-      _currentFile = await _fileService.createRecordFile(
-        customName: customName,
-      );
       _dataBuffer.clear();
 
       await _sensorService.startRecording();
@@ -71,7 +65,7 @@ class RecordingViewModel extends ChangeNotifier {
   Future<void> pauseRecording() async {
     await _sensorService.pauseRecording();
     _durationTimer?.cancel();
-    await _flushBuffer(); // Écrire les données en attente
+    // await _flushBuffer(); // Écrire les données en attente
     notifyListeners();
   }
 
@@ -87,8 +81,6 @@ class RecordingViewModel extends ChangeNotifier {
     await _sensorService.stopRecording();
     _durationTimer?.cancel();
     _recordingDuration = Duration.zero;
-
-    await _flushBuffer(); // Écrire les dernières données
 
     final file = _currentFile;
     _currentFile = null;
@@ -136,18 +128,7 @@ class RecordingViewModel extends ChangeNotifier {
 
     // Écrire par lots pour optimiser les performances
     if (_dataBuffer.length >= _bufferSize) {
-      _flushBuffer();
-    }
-  }
-
-  Future<void> _flushBuffer() async {
-    if (_dataBuffer.isEmpty || _currentFile == null) return;
-
-    try {
-      await _fileService.appendBatch(_currentFile!, List.from(_dataBuffer));
-      _dataBuffer.clear();
-    } catch (e) {
-      print('Error flushing buffer: $e');
+      // _flushBuffer();
     }
   }
 

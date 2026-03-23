@@ -5,7 +5,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
-import 'package:sensorite/core/utils/utls.dart';
 
 StreamSubscription? subscription;
 
@@ -18,7 +17,6 @@ void startInternetListening({bool forceRestart = false}) {
     subscription!.cancel();
     subscription = null;
   }
-  myprint("Connectivity changed: $subscription");
 
   subscription = Connectivity().onConnectivityChanged.listen(
     (List<ConnectivityResult> result) {

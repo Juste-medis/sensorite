@@ -18,9 +18,7 @@ dependencies:
   # Stockage
   path_provider: ^2.1.1     # Chemins de fichiers
   csv: ^5.1.1               # Export CSV
-  
-  # Graphiques (pour la phase 2)
-  fl_chart: ^0.66.0         # Graphiques style
+   
   
   # Gestion d'état
   provider: ^6.1.1          # ViewModels simples

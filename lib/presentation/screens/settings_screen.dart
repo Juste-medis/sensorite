@@ -212,7 +212,7 @@ class SettingsScreen extends StatelessWidget {
                     const Divider(height: 24),
                     _buildAboutRow('Développé avec', 'Flutter 3.x'),
                     const Divider(height: 24),
-                    _buildAboutRow('Capteurs', 'sensors_plus'),
+                    _buildAboutRow('Capteurs', 'motion_sensors'),
                   ],
                 ),
               ),

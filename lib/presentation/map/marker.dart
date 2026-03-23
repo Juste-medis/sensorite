@@ -214,10 +214,7 @@ class _DirectionalConePainter extends CustomPainter {
     final shader = RadialGradient(
       center: Alignment.center,
       radius: 0.5,
-      colors: [
-        color.withValues(alpha: 0.55),
-        color.withValues(alpha: 0.0),
-      ],
+      colors: [color.withValues(alpha: 0.55), color.withValues(alpha: 0.0)],
       stops: const [0.0, 1.0],
     ).createShader(Rect.fromCircle(center: Offset(cx, cy), radius: radius));
 
