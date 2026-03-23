@@ -5,11 +5,7 @@ import 'dart:math' as math;
 const double _earthRadiusMeters = 6378137.0;
 const double _defaultDtSeconds = 0.2;
 const double _maxDtSeconds = 1.0;
-<<<<<<< HEAD
 const double _maxSpeedMps = 17.5; // ~12 km/h max walking/jogging
-=======
-const double _maxSpeedMps = 3.5; // ~12 km/h max walking/jogging
->>>>>>> 4868c9d70714fbb1033f7dbbc285c2d30f5e809c
 const double _strideLength = 0.72; // longueur de pas moyenne en mètres
 
 // ─── État global dead-reckoning ───────────────────────────────────────────────
@@ -39,7 +35,6 @@ double _normalizeAngleDegrees(double value) {
   if (normalized < 0) normalized += 360.0;
   return normalized;
 }
-
 
 double _clamp(double value, double min, double max) {
   if (value < min) return min;

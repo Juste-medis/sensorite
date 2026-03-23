@@ -40,12 +40,8 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
   SensorData? _latestCompleteSensorData;
   bool _hasCentered = false;
   DateTime? _lastGpsUpdateTime;
-<<<<<<< HEAD
   double _lastValidGpsHeading =
       0.0; // dernier cap GPS fiable (vitesse suffisante)
-=======
-  double _lastValidGpsHeading = 0.0; // dernier cap GPS fiable (vitesse suffisante)
->>>>>>> 4868c9d70714fbb1033f7dbbc285c2d30f5e809c
 
   // Traces pour comparaison GPS vs dead-reckoning
   final List<LatLng> _gpsTrack = [];
@@ -82,8 +78,6 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
         accelZ: event.z,
       );
       _tryFuseSensors();
-<<<<<<< HEAD
-=======
     });
 
     _gyroSub = gyroscopeEventStream().listen((GyroscopeEvent event) {
@@ -115,73 +109,6 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
     }
   }
 
-  void _startInterpolationLoop() {
-    _interpolationTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
-      final sensorData = _latestCompleteSensorData;
-      if (sensorData == null) return;
-
-      if (_vsMode) {
-        // Mode VS : DR tourne librement sans jamais être corrigé par le GPS
-        final base = _drLocation ?? _currentLocation;
-        if (base == null || base.latitude == null || base.longitude == null) return;
-
-        final predicted = interpolPosition(base, sensorData);
-        if (!mounted) return;
-        _drTrack.add(LatLng(predicted.latitude!, predicted.longitude!));
-        if (_drTrack.length > _maxTrackPoints) _drTrack.removeAt(0);
-        setState(() => _drLocation = predicted);
-      } else {
-        // Mode normal : DR uniquement quand le GPS est perdu
-        final gpsAge = _lastGpsUpdateTime == null
-            ? null
-            : DateTime.now().difference(_lastGpsUpdateTime!);
-        if (gpsAge != null && gpsAge < const Duration(seconds: 1)) return;
-
-        final currentLocation = _currentLocation;
-        if (currentLocation == null ||
-            currentLocation.latitude == null ||
-            currentLocation.longitude == null) return;
-
-        final interpolatedLocation = interpolPosition(currentLocation, sensorData);
-        if (!mounted) return;
-        _drTrack.add(LatLng(interpolatedLocation.latitude!, interpolatedLocation.longitude!));
-        if (_drTrack.length > _maxTrackPoints) _drTrack.removeAt(0);
-        setState(() => _currentLocation = interpolatedLocation);
-        widget.onRealtimeData?.call(interpolatedLocation, sensorData);
-      }
->>>>>>> 4868c9d70714fbb1033f7dbbc285c2d30f5e809c
-    });
-
-    _gyroSub = gyroscopeEventStream().listen((GyroscopeEvent event) {
-      _latestGyro = SensorData(
-        timestamp: DateTime.now(),
-        gyroX: event.x,
-        gyroY: event.y,
-        gyroZ: event.z,
-      );
-      _tryFuseSensors();
-    });
-  }
-
-  void _tryFuseSensors() {
-    if (_latestAccel == null || _latestGyro == null) return;
-    _latestCompleteSensorData = SensorData(
-      timestamp: DateTime.now(),
-      accelX: _latestAccel!.accelX,
-      accelY: _latestAccel!.accelY,
-      accelZ: _latestAccel!.accelZ,
-      gyroX: _latestGyro!.gyroX,
-      gyroY: _latestGyro!.gyroY,
-      gyroZ: _latestGyro!.gyroZ,
-    );
-
-    final location = _currentLocation;
-    if (location != null) {
-      widget.onRealtimeData?.call(location, _latestCompleteSensorData);
-    }
-  }
-
-<<<<<<< HEAD
   void _startInterpolationLoop() {
     _interpolationTimer = Timer.periodic(const Duration(milliseconds: 200), (
       _,
@@ -227,18 +154,6 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
         if (_drTrack.length > _maxTrackPoints) _drTrack.removeAt(0);
         setState(() => _currentLocation = interpolatedLocation);
         widget.onRealtimeData?.call(interpolatedLocation, sensorData);
-=======
-  void _toggleVsMode() {
-    setState(() {
-      _vsMode = !_vsMode;
-      if (_vsMode) {
-        // Ancrer le DR sur la position GPS actuelle, le cap est déjà bon (GPS le maintient)
-        _drTrack.clear();
-        _drLocation = _currentLocation;
-      } else {
-        _drLocation = null;
-        _drTrack.clear();
->>>>>>> 4868c9d70714fbb1033f7dbbc285c2d30f5e809c
       }
     });
   }
@@ -279,13 +194,9 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
       final spd = currentLocation.speed ?? 0.0;
       final hdg = currentLocation.heading ?? 0.0;
       if (spd > 0.5 && hdg.isFinite) _lastValidGpsHeading = hdg;
-<<<<<<< HEAD
       _gpsTrack.add(
         LatLng(currentLocation.latitude!, currentLocation.longitude!),
       );
-=======
-      _gpsTrack.add(LatLng(currentLocation.latitude!, currentLocation.longitude!));
->>>>>>> 4868c9d70714fbb1033f7dbbc285c2d30f5e809c
       if (_gpsTrack.length > _maxTrackPoints) _gpsTrack.removeAt(0);
       setState(() {
         _currentLocation = currentLocation;
@@ -303,7 +214,7 @@ class _OSMFlutterMapState extends State<OSMFlutterMap> {
       });
       widget.onRealtimeData?.call(currentLocation, _latestCompleteSensorData);
       myprint(
-        "Sensor Data: accel=(${_latestCompleteSensorData?.accelX}, ${_latestCompleteSensorData?.  accelY}, ${_latestCompleteSensorData?.accelZ}), gyro=(${_latestCompleteSensorData?.gyroX}, ${_latestCompleteSensorData?.gyroY}, ${_latestCompleteSensorData?.gyroZ})",
+        "Sensor Data: accel=(${_latestCompleteSensorData?.accelX}, ${_latestCompleteSensorData?.accelY}, ${_latestCompleteSensorData?.accelZ}), gyro=(${_latestCompleteSensorData?.gyroX}, ${_latestCompleteSensorData?.gyroY}, ${_latestCompleteSensorData?.gyroZ})",
       );
       final currentPoint = LatLng(
         currentLocation.latitude!,
