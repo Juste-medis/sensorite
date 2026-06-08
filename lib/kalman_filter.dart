@@ -46,7 +46,7 @@ class IMUKalmanFilter {
   static const double _turnYawRateThreshold = 0.07; // rad/s
   static const double _turnLateralAccelThreshold = 0.30; // m/s²
 
-  // NHC measurement noise variance (m/s)² — tight since vehicles can't slide sideways
+  // NHC measurement noise variance (m/s)² - tight since vehicles can't slide sideways
   static const double _rNhc = 0.01;
 
   // Low-pass filter coefficient for accelerometer noise reduction
@@ -78,8 +78,6 @@ class IMUKalmanFilter {
   // Stationary detection
   final List<double> _recentAccelMagnitudes = [];
   static const int varianceWindow = 20;
-  // Higher threshold for vehicle use — smooth driving at constant speed
-  // must not be mistaken for stationary (was 0.15, designed for pedestrians)
   static const double stationaryThreshold = 0.02;
   int _stationarySamples = 0;
   static const int _stationarySampleTarget = 50;
@@ -358,7 +356,7 @@ class IMUKalmanFilter {
     var HPHT = _matMul(HP, HT);
     var S = _matAdd(HPHT, R);
 
-    // Kalman gain: K = P*H^T*S^(-1)
+    // Kalman gain
     var PHT = _matMul(P, HT);
     var Sinv = _invertMatrix(S);
     if (Sinv == null) return; // Singular matrix, skip update
@@ -378,7 +376,7 @@ class IMUKalmanFilter {
     if (_hasUsableBearing(speed, bearing)) {
       x[6] = _blendAngle(x[6], _navBearingToYaw(bearing), 0.35);
     } else {
-      // GPS bearing unavailable (Android returns -1) — derive yaw from the
+      // GPS bearing unavailable (Android returns -1) - derive yaw from the
       // velocity vector that the Kalman update just set.
       final double vMag = sqrt(x[2] * x[2] + x[3] * x[3]);
       if (vMag > 0.5) {
@@ -443,7 +441,6 @@ class IMUKalmanFilter {
     final double hs = -sin(yaw); // H[vx]
     final double hc = cos(yaw); // H[vy]
 
-    // Lateral velocity — pseudo-measurement expected to be 0
     final double lateralVel = x[2] * hs + x[3] * hc;
 
     // Innovation covariance S (scalar)
@@ -518,7 +515,6 @@ class IMUKalmanFilter {
     _hasSpeedRef = true;
   }
 
-  // ========== Matrix operations ==========
 
   static List<List<double>> _identity(int size, double scale) {
     return List.generate(

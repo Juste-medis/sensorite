@@ -176,9 +176,6 @@ class NavigationService extends ChangeNotifier {
       );
 
   Future<void> start() async {
-    // Start a fresh navigation session every time the user presses "start".
-    // Without this, the EKF state can leak from the previous run and produce
-    // inconsistent first seconds (speed/position already non-zero in calibrating).
     _kalman.reset();
     _trail.clear();
     _gpsTrail.clear();
@@ -367,7 +364,6 @@ class NavigationService extends ChangeNotifier {
           lat: pos[0],
           lon: pos[1],
           timestamp: now,
-          // In VS mode, the EKF is NOT corrected by GPS → always IMU prediction
           fromGPS: _gpsAvailable && !_vsMode,
           speed: _kalman.speed,
           heading: _kalman.heading,
@@ -391,8 +387,7 @@ class NavigationService extends ChangeNotifier {
     _lastGpsAccuracy = position.accuracy;
 
     if (_vsMode) {
-      // VS mode: GPS is the reference truth — do NOT correct the EKF
-      // Mode stays vsMode, EKF keeps predicting from IMU only
+
     } else {
       if (_kalman.isCalibrated) {
         _mode = NavigationMode.gps;
@@ -470,9 +465,7 @@ class NavigationService extends ChangeNotifier {
     }
   }
 
-  /// Start VS mode: IMU predicts freely, GPS recorded as reference truth.
-  /// Clears both trails so the comparison starts from a clean slate.
-  /// Call only when GPS is active and calibration is done.
+
   void startVSMode() {
     if (!_kalman.isCalibrated || !_gpsAvailable) return;
     _vsSessionCounter++;
@@ -521,7 +514,7 @@ class NavigationService extends ChangeNotifier {
 
   Future<String?> exportData() => _recorder.exportCSV();
 
-  // ── Auto-collection ────────────────────────────────────────────────────────
+  //  Auto-collection
 
   /// Start automatic VS-mode cycling.
   /// Each segment stops on 1 km GPS distance or 1 minute, exports CSV,
@@ -837,7 +830,7 @@ class NavigationService extends ChangeNotifier {
     }
   }
 
-  // ── Reset / getters ────────────────────────────────────────────────────────
+  //  Reset / getters
 
   void reset() {
     stopAutoCollection();
