@@ -17,7 +17,12 @@ import 'navigation_service.dart';
 ///
 /// Cet écran est typiquement ouvert (via une navigation) à la fin ou pendant
 /// une session pour visualiser et comparer les deux trajectoires.
+// StatefulWidget : widget dont l'apparence peut changer au cours du temps.
+// Il se découpe en 2 classes : le widget lui-même (immuable, ne contient que
+// les paramètres) et son State (mutable, contient les données qui évoluent).
 class TraceScreen extends StatefulWidget {
+  // `final` : ces paramètres sont fixés à la construction et ne changent plus.
+  // C'est le State (plus bas) qui porte ce qui est modifiable.
   /// Liste des enregistrements de position estimés (trace IMU/fusion).
   final List<PositionRecord> trail;
 
@@ -38,13 +43,19 @@ class TraceScreen extends StatefulWidget {
   ///
   /// Appelé automatiquement par le framework Flutter lors de l'insertion
   /// du widget dans l'arbre. Renvoie l'instance d'état qui gère la carte.
+  // createState() : appelé une fois par Flutter pour relier le widget à son
+  // objet d'état. C'est le pont obligatoire entre StatefulWidget et State.
   @override
   State<TraceScreen> createState() => _TraceScreenState();
 }
 
 /// État de [TraceScreen] : gère le contrôleur de carte, l'affichage des
 /// statistiques et la construction de la vue cartographique des trajectoires.
+// Le State contient l'état mutable et la méthode build(). Depuis ici, on accède
+// aux paramètres du widget via `widget.xxx` (ex. widget.trail).
 class _TraceScreenState extends State<TraceScreen> {
+  // `late final` : la valeur sera affectée plus tard (dans initState), mais une
+  // seule fois. `late` permet de différer l'initialisation après la déclaration.
   /// Contrôleur de la carte [FlutterMap], utilisé pour recentrer/zoomer.
   late final MapController _mapController;
 
@@ -56,6 +67,9 @@ class _TraceScreenState extends State<TraceScreen> {
   /// Ne prend pas de paramètre et ne renvoie rien. Crée le [MapController].
   /// Appelé une seule fois par le framework lors de la création de l'état,
   /// avant le premier `build`.
+  // initState() : appelé une seule fois à la création du State, avant le premier
+  // build. Idéal pour initialiser des contrôleurs. On appelle toujours
+  // super.initState() en premier.
   @override
   void initState() {
     super.initState();
@@ -67,6 +81,9 @@ class _TraceScreenState extends State<TraceScreen> {
   /// Ne prend pas de paramètre et ne renvoie rien. Détruit le [MapController]
   /// pour éviter les fuites mémoire. Appelé par le framework lorsque le widget
   /// est retiré définitivement de l'arbre.
+  // dispose() : symétrique de initState, appelé quand le widget disparaît
+  // définitivement. On y libère les ressources (ici le MapController) pour éviter
+  // les fuites mémoire. super.dispose() est appelé en dernier.
   @override
   void dispose() {
     _mapController.dispose();
@@ -77,6 +94,10 @@ class _TraceScreenState extends State<TraceScreen> {
   ///
   /// Ne prend pas de paramètre. Renvoie la liste des points GPS prêts à être
   /// tracés sur la carte. Utilisé par `build` et `_stats`.
+  // Getter calculé : ce n'est pas une variable stockée, mais une propriété
+  // recalculée à chaque accès. `.map(...)` transforme chaque élément de la liste
+  // et `.toList()` matérialise le résultat (map renvoie un Iterable paresseux).
+  // LatLng = type de coordonnée (latitude, longitude) attendu par flutter_map.
   List<LatLng> get _gpsPoints =>
       widget.gpsTrail.map((p) => LatLng(p.lat, p.lon)).toList();
 
@@ -85,6 +106,8 @@ class _TraceScreenState extends State<TraceScreen> {
   /// Ne prend pas de paramètre. Filtre [TraceScreen.trail] pour ne garder que
   /// les points non issus du GPS (`fromGPS == false`), puis les convertit en
   /// [LatLng]. Renvoie la liste des points IMU. Utilisé par `build` et `_stats`.
+  // `.where(...)` filtre la liste (garde les éléments où le test est vrai).
+  // Ici on ne conserve que les points NON issus du GPS (donc estimés par l'IMU).
   List<LatLng> get _imuPoints => widget.trail
       .where((p) => !p.fromGPS)
       .map((p) => LatLng(p.lat, p.lon))
@@ -95,9 +118,15 @@ class _TraceScreenState extends State<TraceScreen> {
   /// Ne prend pas de paramètre. Fait la moyenne des latitudes et longitudes de
   /// tous les points GPS et IMU. Renvoie le [LatLng] central, ou `null` si
   /// aucune donnée n'est disponible. Utilisé par `build` pour centrer la carte.
+  // Type de retour `LatLng?` : le `?` indique que la valeur peut être null
+  // (cas où il n'y a aucune donnée). Dart force alors à gérer ce cas null.
   LatLng? get _center {
+    // `...` (spread) déverse le contenu de plusieurs listes dans une nouvelle.
+    // Ici on fusionne tous les points GPS + tous les points IMU.
     final all = [...widget.gpsTrail, ...widget.trail.where((p) => !p.fromGPS)];
     if (all.isEmpty) return null;
+    // `.reduce(...)` combine tous les éléments en une seule valeur : ici la
+    // somme de toutes les latitudes, divisée par le nombre => moyenne.
     final lat = all.map((p) => p.lat).reduce((a, b) => a + b) / all.length;
     final lon = all.map((p) => p.lon).reduce((a, b) => a + b) / all.length;
     return LatLng(lat, lon);
@@ -176,6 +205,9 @@ class _TraceScreenState extends State<TraceScreen> {
   /// fin IMU) ; le panneau de statistiques en bas si activé ; et un bouton
   /// flottant pour ajuster le cadrage de la carte sur l'ensemble des points.
   /// Appelé par le framework Flutter à chaque (re)construction de l'écran.
+  // build() : décrit l'interface à partir de l'état courant. Flutter le rappelle
+  // à chaque rafraîchissement (notamment après un setState). On y construit un
+  // arbre de widgets imbriqués.
   @override
   Widget build(BuildContext context) {
     final center = _center;
@@ -183,6 +215,8 @@ class _TraceScreenState extends State<TraceScreen> {
     final imuPoints = _imuPoints;
     final hasData = gpsPoints.isNotEmpty || imuPoints.isNotEmpty;
 
+    // Scaffold : squelette d'écran Material. Il fournit des emplacements
+    // prêts à l'emploi : appBar (barre du haut), body (contenu), floatingActionButton...
     return Scaffold(
       backgroundColor: const Color(0xFF0A0E1A),
       appBar: AppBar(
@@ -207,6 +241,9 @@ class _TraceScreenState extends State<TraceScreen> {
                     _showStats ? Icons.info : Icons.info_outline,
                     color: _showStats ? const Color(0xFF00E5FF) : Colors.white38,
                   ),
+                  // setState(...) : prévient Flutter qu'une donnée d'état a
+                  // changé. Le framework reconstruit alors le widget (build) pour
+                  // refléter la nouvelle valeur de _showStats à l'écran.
                   onPressed: () => setState(() => _showStats = !_showStats),
                 ),
               ],
@@ -214,9 +251,14 @@ class _TraceScreenState extends State<TraceScreen> {
           ),
         ],
       ),
+      // Column : empile ses enfants verticalement (du haut vers le bas).
       body: Column(
         children: [
+          // Expanded : à l'intérieur d'une Column, cet enfant prend tout
+          // l'espace vertical restant (ici la carte occupe le reste de l'écran).
           Expanded(
+            // Opérateur ternaire `condition ? A : B` : choisit le widget à
+            // afficher. Sans données -> message ; sinon -> la carte FlutterMap.
             child: !hasData
                 ? const Center(
                     child: Text(
@@ -225,20 +267,32 @@ class _TraceScreenState extends State<TraceScreen> {
                       style: TextStyle(color: Colors.white38, fontSize: 14),
                     ),
                   )
+                // FlutterMap : widget de carte. Il fonctionne par empilement de
+                // couches (children) dessinées les unes au-dessus des autres :
+                // le fond de carte d'abord, puis les tracés, puis les marqueurs.
                 : FlutterMap(
+                    // On lui passe le contrôleur créé dans initState pour pouvoir
+                    // piloter la carte (recadrer) depuis le code.
                     mapController: _mapController,
                     options: MapOptions(
+                      // `??` (si-null) : utilise center, ou Paris par défaut si
+                      // center vaut null (aucune donnée pour calculer le centre).
                       initialCenter: center ?? const LatLng(48.8566, 2.3522),
                       initialZoom: 16,
                     ),
                     children: [
-                      // Tuiles OpenStreetMap (gratuites, sans clé d'API)
+                      // Couche 1 (fond) : tuiles OpenStreetMap (gratuites, sans
+                      // clé d'API). Le template {z}/{x}/{y} = zoom/colonne/ligne.
                       TileLayer(
                         urlTemplate:
                             'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                         userAgentPackageName: 'com.example.sensoritetest',
                       ),
-                      // Trace GPS (verte)
+                      // `if (...)` dans une liste (collection-if) : ajoute la
+                      // couche seulement si la condition est vraie. Ici on ne
+                      // trace la ligne GPS que s'il y a au moins 2 points.
+                      // PolylineLayer dessine une ou plusieurs lignes brisées
+                      // reliant des coordonnées. Trace GPS (verte).
                       if (gpsPoints.length > 1)
                         PolylineLayer(
                           polylines: [
@@ -249,7 +303,8 @@ class _TraceScreenState extends State<TraceScreen> {
                             ),
                           ],
                         ),
-                      // Trace IMU (orange)
+                      // Seconde polyligne, dessinée par-dessus la GPS : trace
+                      // IMU (orange, en pointillés pour la distinguer).
                       if (imuPoints.length > 1)
                         PolylineLayer(
                           polylines: [
@@ -263,7 +318,9 @@ class _TraceScreenState extends State<TraceScreen> {
                             ),
                           ],
                         ),
-                      // Marqueurs : départ GPS, arrivée GPS, fin IMU
+                      // Couche du dessus : MarkerLayer place des widgets
+                      // (épingles/pastilles) à des coordonnées précises.
+                      // Marqueurs : départ GPS, arrivée GPS, fin IMU.
                       MarkerLayer(
                         markers: [
                           if (gpsPoints.isNotEmpty)
@@ -277,9 +334,13 @@ class _TraceScreenState extends State<TraceScreen> {
                     ],
                   ),
           ),
+          // collection-if à nouveau : le panneau de stats n'est ajouté à la
+          // Column que si l'utilisateur l'a activé ET qu'il y a des données.
           if (_showStats && hasData) _buildStatsPanel(),
         ],
       ),
+      // floatingActionButton : bouton rond flottant en bas à droite (Scaffold).
+      // null = aucun bouton (cas sans données).
       floatingActionButton: hasData
           ? FloatingActionButton.small(
               backgroundColor: const Color(0xFF141B2D),
@@ -287,6 +348,9 @@ class _TraceScreenState extends State<TraceScreen> {
               onPressed: () {
                 final all = [...gpsPoints, ...imuPoints];
                 if (all.isEmpty) return;
+                // Calcule la zone rectangulaire englobant tous les points, puis
+                // demande au contrôleur de carte d'y ajuster la caméra (zoom +
+                // recentrage automatiques) pour que tout soit visible.
                 final bounds = LatLngBounds.fromPoints(all);
                 _mapController.fitCamera(
                   CameraFit.bounds(
@@ -331,6 +395,8 @@ class _TraceScreenState extends State<TraceScreen> {
   /// « D » pour départ, « A » pour arrivée). Renvoie un [Marker] rond à bordure
   /// blanche contenant le libellé. Appelé par `build` pour marquer le départ et
   /// l'arrivée GPS ainsi que la fin de la trace IMU.
+  // Marker : décrit un point de la carte par sa position (point) et le widget
+  // (child) à y afficher. Sa taille est fixée en pixels écran (width/height).
   Marker _marker(LatLng point, Color color, String label) {
     return Marker(
       point: point,
@@ -370,8 +436,13 @@ class _TraceScreenState extends State<TraceScreen> {
         color: Color(0xFF0D1220),
         border: Border(top: BorderSide(color: Color(0xFF1A2540))),
       ),
+      // Row : aligne ses enfants horizontalement. spaceAround répartit
+      // l'espace libre autour de chaque cellule de statistique.
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
+        // On transforme chaque entrée (clé -> valeur) de la map de stats en un
+        // widget cellule. `.map(...).toList()` produit la liste d'enfants de la
+        // Row. e.key = libellé, e.value = valeur formatée.
         children: stats.entries
             .map((e) => _statCell(e.key, e.value))
             .toList(),

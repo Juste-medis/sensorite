@@ -9,9 +9,13 @@ import 'trace_screen.dart';
 /// permettant d'ouvrir l'ecran de visualisation [TraceScreen] correspondant.
 /// Widget de type [StatefulWidget] dont l'etat est gere par
 /// [_CsvTracesScreenState].
+// StatefulWidget : widget dont l'apparence peut changer au cours du temps.
+// Il est immuable lui-meme (ses champs sont 'final'), mais il delegue son etat
+// modifiable a une classe State separee (ici _CsvTracesScreenState).
 class CsvTracesScreen extends StatefulWidget {
   /// Service de navigation injecte, utilise pour charger les sessions de
   /// traces CSV depuis le stockage de l'appareil.
+  // 'final' : champ defini une seule fois, a la construction du widget.
   final NavigationService navService;
 
   /// Construit l'ecran.
@@ -28,6 +32,8 @@ class CsvTracesScreen extends StatefulWidget {
   /// Appele automatiquement par le framework Flutter lors de l'insertion du
   /// widget dans l'arbre.
   @override
+  // createState() : appele par Flutter pour creer l'objet State qui contiendra
+  // les donnees mutables et la methode build() de ce widget.
   State<CsvTracesScreen> createState() => _CsvTracesScreenState();
 }
 
@@ -40,6 +46,10 @@ class _CsvTracesScreenState extends State<CsvTracesScreen> {
   ///
   /// Reaffecte a chaque rafraichissement et consomme par le [FutureBuilder]
   /// dans [build] pour afficher l'etat de chargement, l'erreur ou la liste.
+  // Future<T> : valeur disponible plus tard (resultat d'une operation async),
+  // ici la liste des sessions chargee depuis le disque.
+  // 'late' : la variable sera initialisee avant son premier usage (dans
+  // initState), ce qui evite de la marquer comme nullable.
   late Future<List<CsvTraceSession>> _futureSessions;
 
   /// Initialise l'etat du widget.
@@ -48,8 +58,12 @@ class _CsvTracesScreenState extends State<CsvTracesScreen> {
   /// le framework Flutter a la creation de l'etat : declenche le premier
   /// chargement des sessions CSV via [NavigationService.loadCsvTraceSessions].
   @override
+  // initState() : appele une seule fois a la creation de l'etat. Endroit idiomatique
+  // pour lancer un chargement initial. Pas de async ici : on stocke le Future
+  // sans l'attendre, c'est le FutureBuilder qui reagira a sa completion.
   void initState() {
     super.initState();
+    // 'widget' donne acces a l'instance du StatefulWidget (et donc a navService).
     _futureSessions = widget.navService.loadCsvTraceSessions();
   }
 
@@ -61,10 +75,14 @@ class _CsvTracesScreenState extends State<CsvTracesScreen> {
   /// resout une fois les donnees disponibles. Appele lors d'un appui sur le
   /// bouton de rafraichissement de l'[AppBar] et lors du geste de tir-pour-
   /// rafraichir du [RefreshIndicator].
+  // 'async' marque une fonction asynchrone ; elle renvoie un Future.
   Future<void> _refresh() async {
+    // setState() previent Flutter qu'un etat a change : il reconstruit (rappelle
+    // build) le widget. Ici on remplace le Future, ce qui relance le FutureBuilder.
     setState(() {
       _futureSessions = widget.navService.loadCsvTraceSessions();
     });
+    // 'await' met en pause la fonction jusqu'a la fin du Future (sans bloquer l'UI).
     await _futureSessions;
   }
 
@@ -76,7 +94,10 @@ class _CsvTracesScreenState extends State<CsvTracesScreen> {
   String _fmtDate(DateTime d) {
     /// Convertit un entier [n] en chaine de deux caracteres, en ajoutant un
     /// zero a gauche si necessaire (ex. 5 -> "05").
+    // Fonction locale (definie dans une autre fonction) ; '=>' est une syntaxe
+    // courte pour une fonction qui ne fait que renvoyer une expression.
     String two(int n) => n.toString().padLeft(2, '0');
+    // '${...}' : interpolation, insere la valeur d'une expression dans la chaine.
     return '${d.year}-${two(d.month)}-${two(d.day)} ${two(d.hour)}:${two(d.minute)}:${two(d.second)}';
   }
 
@@ -113,15 +134,21 @@ class _CsvTracesScreenState extends State<CsvTracesScreen> {
           ),
         ],
       ),
+      // FutureBuilder : widget qui se reconstruit automatiquement selon l'etat
+      // du Future fourni. Son 'builder' est rappele a chaque changement d'etat
+      // (en attente -> termine), evitant de gerer le chargement manuellement.
       body: FutureBuilder<List<CsvTraceSession>>(
         future: _futureSessions,
+        // 'snapshot' = instantane de l'etat actuel du Future (etat, donnees, erreur).
         builder: (context, snapshot) {
+          // connectionState == waiting : le Future n'est pas encore termine.
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
               child: CircularProgressIndicator(color: Color(0xFF00E5FF)),
             );
           }
 
+          // hasError : le Future s'est termine par une exception.
           if (snapshot.hasError) {
             return Center(
               child: Padding(
@@ -135,6 +162,9 @@ class _CsvTracesScreenState extends State<CsvTracesScreen> {
             );
           }
 
+          // snapshot.data : valeur produite par le Future (peut etre null si pas
+          // encore disponible). L'operateur '??' fournit une valeur de repli (ici
+          // une liste vide) quand la partie de gauche est null.
           final sessions = snapshot.data ?? const <CsvTraceSession>[];
           if (sessions.isEmpty) {
             return const Center(
@@ -148,14 +178,25 @@ class _CsvTracesScreenState extends State<CsvTracesScreen> {
           return RefreshIndicator(
             onRefresh: _refresh,
             color: const Color(0xFF00E5FF),
+            // ListView.separated : liste defilante performante qui ne construit
+            // que les elements visibles a l'ecran (a la demande, via itemBuilder),
+            // avec un separateur insere entre chaque element.
             child: ListView.separated(
               padding: const EdgeInsets.all(12),
+              // itemCount : nombre total d'elements de la liste.
               itemCount: sessions.length,
+              // '_' et '__' : parametres ignores (la signature les exige mais on
+              // ne s'en sert pas). Ici un simple espace de 8px entre les cartes.
               separatorBuilder: (_, __) => const SizedBox(height: 8),
+              // itemBuilder : appele pour construire chaque element a l'index 'i'.
               itemBuilder: (context, i) {
                 final s = sessions[i];
+                // InkWell : zone cliquable avec effet visuel d'ondulation au tap.
                 return InkWell(
                   onTap: () {
+                    // Navigator.push : empile un nouvel ecran par-dessus l'actuel
+                    // (l'utilisateur pourra revenir en arriere). MaterialPageRoute
+                    // construit cet ecran (TraceScreen) avec une transition standard.
                     Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -212,6 +253,8 @@ class _CsvTracesScreenState extends State<CsvTracesScreen> {
                           Wrap(
                             spacing: 8,
                             runSpacing: 6,
+                            // _chip(...) : on appelle une methode qui renvoie un
+                            // widget pour factoriser la construction des etiquettes.
                             children: [
                               _chip('Lignes: ${s.rowCount}'),
                               _chip('GPS: ${s.gpsTrail.length} pts'),

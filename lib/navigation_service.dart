@@ -169,10 +169,16 @@ enum NavigationMode { idle, calibrating, gps, deadReckoning, gpsDenied, vsMode }
 /// "mode VS" (où le GPS est enregistré comme vérité-terrain mais ne corrige pas
 /// le filtre) ainsi que l'auto-collecte de segments de données exportés en CSV.
 /// Étend [ChangeNotifier] : notifie l'interface à chaque mise à jour d'état.
+// ChangeNotifier : mixin Flutter qui permet de prévenir l'UI (via
+// notifyListeners()) qu'un changement d'état a eu lieu et qu'elle doit se
+// redessiner. L'UI s'abonne à ce service pour réagir aux mises à jour.
 class NavigationService extends ChangeNotifier {
   final IMUKalmanFilter _kalman = IMUKalmanFilter();
   final DataRecorder _recorder = DataRecorder();
 
+  // StreamSubscription : poignée vers un abonnement à un flux (Stream) de
+  // données. Le `?` indique que la variable peut être null (null-safety) tant
+  // qu'aucun abonnement n'est actif. On la conserve pour pouvoir l'annuler.
   StreamSubscription? _accelSub;
   StreamSubscription? _gyroSub;
   StreamSubscription? _gpsSub;
@@ -180,6 +186,7 @@ class NavigationService extends ChangeNotifier {
   double _ax = 0, _ay = 0, _az = 0;
   double _gx = 0, _gy = 0, _gz = 0;
 
+  // `DateTime?` : peut être null tant qu'aucune mise à jour n'a eu lieu.
   DateTime? _lastIMUUpdate;
   DateTime? _lastGPSUpdate;
 
@@ -190,6 +197,7 @@ class NavigationService extends ChangeNotifier {
   // rares. Si le dernier point est ancien, la prédiction du EKF est en général
   // plus à jour.
   static const Duration _maxSnapAge = Duration(milliseconds: 1200);
+  // Timer : minuterie qui exécute une fonction plus tard ou de façon répétée.
   Timer? _gpsWatchdog;
   bool _gpsAvailable = false;
 
@@ -252,6 +260,8 @@ class NavigationService extends ChangeNotifier {
         isStationary: _kalman.isStationary,
         timeSinceGPS: _kalman.timeSinceLastGPS,
         mode: _mode,
+        // List.unmodifiable : copie en lecture seule, pour que l'UI ne puisse
+        // pas modifier les listes internes du service par accident.
         trail: List.unmodifiable(_trail),
         gpsTrail: List.unmodifiable(_gpsTrail),
       );
@@ -265,6 +275,8 @@ class NavigationService extends ChangeNotifier {
   /// 50 Hz) qui cadence [_processIMU]. Renvoie un [Future] qui se complète quand
   /// l'initialisation du GPS est terminée. Appelé par l'UI au lancement de la
   /// navigation.
+  // `async` marque une fonction asynchrone : elle peut contenir des `await` et
+  // renvoie un Future (résultat disponible plus tard, sans bloquer l'appli).
   Future<void> start() async {
     _kalman.reset();
     _trail.clear();
@@ -284,13 +296,19 @@ class NavigationService extends ChangeNotifier {
     _archivedVSTraces.clear();
 
     _mode = NavigationMode.calibrating;
+    // notifyListeners() : signale à l'UI abonnée qu'elle doit se redessiner.
     notifyListeners();
 
     _startIMU();
+    // `await` met en pause cette fonction jusqu'à ce que _startGPS() ait fini,
+    // sans bloquer le reste de l'application.
     await _startGPS();
 
     _recorder.startRecording();
 
+    // Timer.periodic : rappelle la fonction de façon répétée à intervalle
+    // régulier (ici toutes les 20 ms, soit 50 Hz). Le `_` est le paramètre
+    // Timer non utilisé.
     _imuTimer = Timer.periodic(const Duration(milliseconds: 20), (_) {
       _processIMU();
     });
@@ -307,8 +325,12 @@ class NavigationService extends ChangeNotifier {
     stopAutoCollection();
     if (_vsMode && !_autoActive) {
       _archiveCurrentVSTrace(reason: 'stop_navigation');
+      // unawaited : lance le Future sans attendre son résultat (export en
+      // arrière-plan), tout en signalant qu'on ignore volontairement le retour.
       unawaited(_exportCurrentVSRun(reason: 'stop_navigation'));
     }
+    // `?.` : n'appelle cancel() que si la variable n'est pas null (null-safe).
+    // Annule les abonnements aux flux pour ne plus recevoir d'événements.
     _accelSub?.cancel();
     _gyroSub?.cancel();
     _gpsSub?.cancel();
@@ -332,6 +354,10 @@ class NavigationService extends ChangeNotifier {
   /// continu les dernières valeurs brutes ([_ax]/[_ay]/[_az] et
   /// [_gx]/[_gy]/[_gz]). Ne renvoie rien. Appelé par [start].
   void _startIMU() {
+    // accelerometerEventStream() : flux (Stream) du plugin sensors_plus qui émet
+    // les mesures de l'accéléromètre. `.listen(...)` s'y abonne : le callback
+    // est rappelé à chaque nouvelle mesure (ici toutes les ~20 ms). Renvoie une
+    // StreamSubscription qu'on stocke pour pouvoir l'annuler plus tard.
     _accelSub = accelerometerEventStream(
       samplingPeriod: const Duration(milliseconds: 20),
     ).listen((event) {
@@ -340,6 +366,7 @@ class NavigationService extends ChangeNotifier {
       _az = event.z;
     });
 
+    // Idem pour le gyroscope (vitesses angulaires).
     _gyroSub = gyroscopeEventStream(
       samplingPeriod: const Duration(milliseconds: 20),
     ).listen((event) {
@@ -366,6 +393,7 @@ class NavigationService extends ChangeNotifier {
     _gpsWatchdog?.cancel();
     _gpsWatchdog = null;
 
+    //vérifie si le service GPS est activé sur l'appareil de l'utilisateur.
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       _mode = NavigationMode.gpsDenied;
@@ -373,8 +401,10 @@ class NavigationService extends ChangeNotifier {
       return;
     }
 
+    // Récupère l'état actuel de la permission de localisation de l'app.
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
+      // Affiche la boîte de dialogue système demandant la permission à l'user.
       permission = await Geolocator.requestPermission();
     }
     if (permission == LocationPermission.denied ||
@@ -384,6 +414,9 @@ class NavigationService extends ChangeNotifier {
       return;
     }
 
+    // getPositionStream() : flux émettant une nouvelle Position à chaque fix
+    // GPS. On s'y abonne : _onGPSUpdate est rappelé pour chaque position reçue,
+    // et onError est appelé en cas d'erreur du flux.
     _gpsSub = Geolocator.getPositionStream(
       locationSettings: _buildLocationSettings(),
     ).listen(
@@ -391,6 +424,9 @@ class NavigationService extends ChangeNotifier {
       onError: (_) => _onGPSLost(),
     );
 
+    // Chien de garde : timer répété (toutes les 2 s) qui détecte une perte GPS
+    // si aucun point n'a été reçu depuis trop longtemps. `!` force l'accès non
+    // null (on a déjà vérifié != null juste avant).
     _gpsWatchdog = Timer.periodic(const Duration(seconds: 2), (_) {
       if (_lastGPSUpdate != null &&
           DateTime.now().difference(_lastGPSUpdate!) > gpsLossThreshold) {
@@ -407,6 +443,8 @@ class NavigationService extends ChangeNotifier {
   /// `bestForNavigation` avec le filtre de distance [_gpsDistanceFilterMeters].
   /// Renvoie l'objet [LocationSettings] correspondant. Appelé par [_startGPS].
   LocationSettings _buildLocationSettings() {
+    // defaultTargetPlatform : constante Flutter indiquant l'OS courant
+    // (Android, iOS, etc.), pour adapter les réglages à chaque plateforme.
     if (defaultTargetPlatform == TargetPlatform.android) {
       return AndroidSettings(
         accuracy: LocationAccuracy.bestForNavigation,
@@ -504,6 +542,8 @@ class NavigationService extends ChangeNotifier {
       }
     }
 
+    // Ne redessine l'UI qu'un cycle sur cinq (~10 Hz) pour éviter de la
+    // surcharger alors que le filtre tourne à 50 Hz.
     if (_imuUpdates % 5 == 0) notifyListeners();
   }
 
@@ -526,6 +566,8 @@ class NavigationService extends ChangeNotifier {
     _lastGpsHeading = position.heading;
     _lastGpsAccuracy = position.accuracy;
 
+    // En mode VS, bloc volontairement vide : on NE corrige PAS le filtre avec
+    // le GPS (il sert seulement de référence enregistrée plus bas).
     if (_vsMode) {
 
     } else {
@@ -924,12 +966,16 @@ class NavigationService extends ChangeNotifier {
 
     final files = dir
         .listSync()
+        // whereType<File>() : ne garde que les éléments de type File (ignore les
+        // dossiers), en convertissant aussi le type de la liste.
         .whereType<File>()
         .where((f) {
           final name = f.path.split(Platform.pathSeparator).last.toLowerCase();
           return name.startsWith('imu_') && name.endsWith('.csv');
         })
         .toList()
+      // `..sort(...)` : cascade Dart. Trie la liste créée par toList() et
+      // renvoie cette même liste (et non le résultat de sort()).
       ..sort(
         (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
       );
@@ -964,6 +1010,8 @@ class NavigationService extends ChangeNotifier {
     }
 
     /// Renvoie l'index de la colonne dont l'en-tête est [name], ou -1 si absente.
+    // `??` : opérateur de coalescence — renvoie index[name] s'il existe, sinon
+    // la valeur par défaut -1 (une Map renvoie null pour une clé absente).
     int idx(String name) => index[name] ?? -1;
 
     final iTs = idx('timestamp_ms');
@@ -994,6 +1042,8 @@ class NavigationService extends ChangeNotifier {
       if (cols.length <= iEstLon || cols.length <= iTs) continue;
 
       int? ts;
+      // try/catch : int.parse lève une exception si la cellule n'est pas un
+      // entier valide ; on l'attrape pour mettre ts à null sans planter.
       try {
         ts = int.parse(cols[iTs].trim());
       } catch (_) {
@@ -1082,6 +1132,8 @@ class NavigationService extends ChangeNotifier {
     if (idx < 0 || idx >= cols.length) return null;
     final v = cols[idx].trim();
     if (v.isEmpty) return null;
+    // tryParse : renvoie null en cas d'échec (au lieu de lever une exception
+    // comme parse), donc pas besoin de try/catch ici.
     return double.tryParse(v);
   }
 
@@ -1098,6 +1150,8 @@ class NavigationService extends ChangeNotifier {
       ArchivedVSTrace(
         createdAt: DateTime.now(),
         reason: reason,
+        // List.from : crée une copie figée des listes courantes, pour que
+        // l'archive ne change plus même si _trail/_gpsTrail évoluent ensuite.
         trail: List<PositionRecord>.from(_trail),
         gpsTrail: List<PositionRecord>.from(_gpsTrail),
       ),
@@ -1181,6 +1235,9 @@ class NavigationService extends ChangeNotifier {
   /// timers, puis délègue à `super.dispose()`. Ne renvoie rien. Appelé
   /// automatiquement par le framework Flutter lorsque le service n'est plus
   /// utilisé.
+  // @override : redéfinit la méthode dispose() héritée de ChangeNotifier.
+  // Appelée par Flutter pour libérer les ressources ; super.dispose() exécute
+  // le nettoyage de la classe parente.
   @override
   void dispose() {
     stop();

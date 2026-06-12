@@ -11,6 +11,8 @@ import 'navigation_service.dart';
 /// chaque mise à jour de l'état de navigation. Il affiche le tracé GPS, le
 /// tracé estimé par l'IMU, des marqueurs de départ/fin et un bandeau de
 /// statistiques (mode, nombre de points, temps sans GPS, dérive).
+// StatefulWidget : widget dont l'apparence peut évoluer dans le temps. Il est
+// immuable lui-même ; tout ce qui change est stocké dans un objet State séparé.
 class LiveMapScreen extends StatefulWidget {
   /// Service de navigation qui fournit l'état courant (position, traces, mode)
   /// et notifie ce widget à chaque nouvelle mise à jour.
@@ -29,6 +31,8 @@ class LiveMapScreen extends StatefulWidget {
   /// Appelé automatiquement par le framework Flutter lors de l'insertion du
   /// widget dans l'arbre. Renvoie une instance de [_LiveMapScreenState].
   @override
+  // createState : Flutter appelle cette méthode pour créer l'objet State qui
+  // contiendra les données mutables et la logique de rendu de ce widget.
   State<LiveMapScreen> createState() => _LiveMapScreenState();
 }
 
@@ -37,7 +41,12 @@ class LiveMapScreen extends StatefulWidget {
 /// Gère le contrôleur de carte, les options d'affichage (suivi automatique de
 /// la position, affichage des statistiques) et l'abonnement aux mises à jour du
 /// [NavigationService]. Reconstruit l'interface à chaque notification reçue.
+// State : conserve l'état entre les reconstructions. Appeler setState(...) ici
+// signale à Flutter de rappeler build() pour redessiner l'interface.
 class _LiveMapScreenState extends State<LiveMapScreen> {
+  // MapController : permet de piloter la carte par code (déplacer le centre,
+  // changer le zoom) en dehors des gestes de l'utilisateur.
+  // `late final` : initialisé plus tard (dans initState) mais une seule fois.
   /// Contrôleur permettant de déplacer et d'ajuster la caméra de la carte.
   late final MapController _mapController;
 
@@ -60,9 +69,13 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   /// Instancie le [MapController] et abonne [_onNavUpdate] aux notifications du
   /// service de navigation.
   @override
+  // initState : appelée une seule fois à la création de l'état, avant le premier
+  // build. Idéale pour les initialisations et l'abonnement aux flux de données.
   void initState() {
     super.initState();
     _mapController = MapController();
+    // addListener : on s'abonne au service. À chaque notification (nouvel état
+    // de navigation), _onNavUpdate sera appelée pour redessiner la carte.
     widget.navService.addListener(_onNavUpdate);
   }
 
@@ -72,6 +85,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   /// permanente. Désabonne [_onNavUpdate] du service de navigation et libère le
   /// [MapController].
   @override
+  // dispose : appelée quand le widget quitte l'arbre définitivement. On y libère
+  // les ressources. Oublier de se désabonner ici provoquerait des fuites mémoire.
   void dispose() {
     widget.navService.removeListener(_onNavUpdate);
     _mapController.dispose();
@@ -86,8 +101,12 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   /// reconstruction de l'interface via [setState]. Ne fait rien si le widget
   /// n'est plus monté.
   void _onNavUpdate() {
+    // mounted : vrai tant que le widget est dans l'arbre. On vérifie avant
+    // setState car une notification peut arriver après la destruction du widget.
     if (!mounted) return;
     if (_followEstimate) _moveToEstimate();
+    // setState avec un corps vide : on n'a rien à modifier ici, mais l'appel
+    // suffit à demander à Flutter de reconstruire l'UI avec le nouvel état.
     setState(() {});
   }
 
@@ -105,6 +124,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
     if (!force && now.difference(_lastFollowMove).inMilliseconds < 350) return;
     _lastFollowMove = now;
     try {
+      // move : recentre la caméra sur une coordonnée (LatLng = latitude/longitude)
+      // avec un niveau de zoom donné (17). LatLng vient de la librairie latlong2.
       _mapController.move(LatLng(s.latitude, s.longitude), 17);
     } catch (_) {
       // La carte peut être momentanément indisponible lors de la première frame.
@@ -122,6 +143,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   void _fitAll(List<LatLng> points) {
     if (points.isEmpty) return;
     try {
+      // fitCamera : ajuste automatiquement zoom et centre pour que tous les
+      // points tiennent à l'écran, avec une marge (padding) autour.
       _mapController.fitCamera(
         CameraFit.bounds(
           bounds: LatLngBounds.fromPoints(points),
@@ -168,6 +191,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   ///
   /// Affiche un message d'invite tant qu'aucune donnée n'est disponible.
   @override
+  // build : Flutter appelle cette méthode pour (re)construire l'UI à chaque
+  // setState. Elle doit renvoyer l'arbre de widgets décrivant l'écran.
   Widget build(BuildContext context) {
     final s = widget.navService.state;
     final gpsPoints = s.gpsTrail.map((p) => LatLng(p.lat, p.lon)).toList();
@@ -175,11 +200,16 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
         .where((p) => !p.fromGPS)
         .map((p) => LatLng(p.lat, p.lon))
         .toList();
+    // Ternaire condition ? a : b : si une position estimée existe (non 0,0) on
+    // crée un LatLng, sinon `null` (pas de position connue pour l'instant).
     final estimate = (s.latitude != 0 || s.longitude != 0)
         ? LatLng(s.latitude, s.longitude)
         : null;
     final imuLinePoints = [
+      // ... (spread) : insère ici tous les éléments de imuPoints dans la liste.
       ...imuPoints,
+      // if-élément dans une liste (collection-if) : ajoute `estimate` seulement
+      // si la condition est vraie. != null garantit qu'on n'ajoute pas null.
       if (estimate != null &&
           (imuPoints.isEmpty || _distMeters(imuPoints.last, estimate) > 0.5))
         estimate,
@@ -189,6 +219,9 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
 
     if (!_didInitialCenter && hasData) {
       _didInitialCenter = true;
+      // addPostFrameCallback : exécute le code juste APRÈS la fin du build/rendu.
+      // Nécessaire ici car la carte n'est pleinement utilisable qu'une fois
+      // affichée : on ne peut pas la déplacer pendant build().
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         if (_followEstimate) {
@@ -205,6 +238,7 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
           '${_distMeters(gpsPoints.last, estimate).toStringAsFixed(1)} m';
     }
 
+    // Scaffold : squelette d'une page (barre du haut, corps, bouton flottant).
     return Scaffold(
       backgroundColor: const Color(0xFF0A0E1A),
       appBar: AppBar(
@@ -237,9 +271,12 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
           ),
         ],
       ),
+      // Column : empile ses enfants verticalement (carte en haut, stats en bas).
       body: Column(
         children: [
+          // Expanded : l'enfant occupe tout l'espace vertical restant.
           Expanded(
+            // Ternaire : si pas de données on affiche un message, sinon la carte.
             child: !hasData
                 ? const Center(
                     child: Text(
@@ -248,9 +285,13 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                       style: TextStyle(color: Colors.white38, fontSize: 13),
                     ),
                   )
+                // FlutterMap : le widget de carte. On lui passe le contrôleur,
+                // des options, et une liste de couches (children) superposées.
                 : FlutterMap(
                     mapController: _mapController,
                     options: MapOptions(
+                      // ?? (si-null) : utilise `estimate` s'il existe, sinon la
+                      // valeur de droite (dernier point GPS, ou Paris par défaut).
                       initialCenter: estimate ??
                           (gpsPoints.isNotEmpty
                               ? gpsPoints.last
@@ -265,12 +306,18 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                         }
                       },
                     ),
+                    // children : les couches de la carte, empilées du fond vers
+                    // le dessus (fond de carte, puis tracés, puis marqueurs).
                     children: [
+                      // TileLayer : fond de carte composé de tuiles images
+                      // téléchargées depuis OpenStreetMap (gratuit, libre).
                       TileLayer(
                         urlTemplate:
                             'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                         userAgentPackageName: 'com.example.sensoritetest',
                       ),
+                      // PolylineLayer : trace une ligne reliant une suite de
+                      // points. Ici le tracé GPS réel (vert, continu).
                       if (gpsPoints.length > 1)
                         PolylineLayer(
                           polylines: [
@@ -281,6 +328,7 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                             ),
                           ],
                         ),
+                      // Second tracé : estimation IMU/Kalman (orange, pointillés).
                       if (imuLinePoints.length > 1)
                         PolylineLayer(
                           polylines: [
@@ -294,6 +342,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                             ),
                           ],
                         ),
+                      // MarkerLayer : place des widgets (épingles) à des
+                      // coordonnées précises sur la carte.
                       MarkerLayer(
                         markers: [
                           if (gpsPoints.isNotEmpty)
@@ -308,6 +358,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                     ],
                   ),
           ),
+          // collection-if : la bannière de stats n'est ajoutée à la Column que
+          // si l'option est activée et que des données existent.
           if (_showStats && hasData)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
@@ -328,6 +380,9 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
             ),
         ],
       ),
+      // floatingActionButton : bouton rond flottant au-dessus du contenu.
+      // Ternaire : on ne l'affiche (sinon null = aucun bouton) que s'il y a des
+      // données ; il sert à recadrer la vue sur l'ensemble du parcours.
       floatingActionButton: hasData
           ? FloatingActionButton.small(
               backgroundColor: const Color(0xFF141B2D),
@@ -347,6 +402,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   /// position estimée IMU (I). Renvoie un [Marker] : un disque coloré bordé de
   /// blanc affichant la lettre [label] en son centre.
   Marker _marker(LatLng point, Color color, String label) {
+    // Marker : associe un widget (ici un disque coloré avec une lettre) à une
+    // position géographique ; width/height fixent sa taille à l'écran.
     return Marker(
       point: point,
       width: 28,
@@ -390,6 +447,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
             fontWeight: FontWeight.w700,
           ),
         ),
+        // SizedBox : boîte vide servant ici simplement d'espace (2 px) entre
+        // la valeur et son intitulé.
         const SizedBox(height: 2),
         Text(
           label,

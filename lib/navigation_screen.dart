@@ -16,6 +16,9 @@ import 'csv_traces_screen.dart';
 /// Étant un [StatefulWidget], il délègue la gestion de son état mutable à
 /// [_NavigationScreenState], qui écoute le [NavigationService] pour se
 /// reconstruire à chaque changement d'état.
+// Un StatefulWidget est un widget dont l'apparence peut changer dans le temps.
+// Flutter sépare le widget (immuable, recréé souvent) de son état mutable,
+// stocké dans une classe State séparée (voir _NavigationScreenState plus bas).
 class NavigationScreen extends StatefulWidget {
   /// Crée l'écran de navigation.
   ///
@@ -29,6 +32,8 @@ class NavigationScreen extends StatefulWidget {
   /// Ne prend aucun paramètre et renvoie une nouvelle instance de
   /// [_NavigationScreenState]. Appelé automatiquement par le framework Flutter
   /// lors de la création du widget dans l'arbre.
+  // createState() relie le widget à sa classe d'état : Flutter l'appelle pour
+  // obtenir l'objet State qui gérera la logique et le redessin de cet écran.
   @override
   State<NavigationScreen> createState() => _NavigationScreenState();
 }
@@ -40,6 +45,10 @@ class NavigationScreen extends StatefulWidget {
 /// bannières, et les drapeaux d'interface ([_isRunning], [_showDebug]).
 /// Utilise [TickerProviderStateMixin] pour fournir le `vsync` nécessaire à
 /// l'[AnimationController]. Se reconstruit à chaque notification du service.
+// La classe State contient les données mutables et la méthode build().
+// `with TickerProviderStateMixin` ajoute la capacité de fournir un "ticker"
+// (signal synchronisé sur le rafraîchissement de l'écran) requis par
+// l'AnimationController via le paramètre vsync (voir initState).
 class _NavigationScreenState extends State<NavigationScreen>
     with TickerProviderStateMixin {
   /// Service central de navigation : fournit l'état (position, vitesse, mode,
@@ -59,6 +68,10 @@ class _NavigationScreenState extends State<NavigationScreen>
   /// Basculé via l'icône `developer_mode` de l'en-tête.
   bool _showDebug = false;
 
+  // initState() est appelé UNE FOIS quand l'écran est inséré dans l'arbre,
+  // avant le premier affichage. C'est l'endroit pour initialiser les
+  // ressources : controllers, abonnements aux services, etc.
+
   /// Initialise l'état au montage du widget.
   ///
   /// Ne prend aucun paramètre et ne renvoie rien. Crée et démarre en boucle
@@ -69,9 +82,14 @@ class _NavigationScreenState extends State<NavigationScreen>
   void initState() {
     super.initState();
     _pulseController = AnimationController(
+      // vsync: this fournit le ticker (grâce au mixin) pour synchroniser
+      // l'animation sur le rafraîchissement de l'écran et éviter de tourner
+      // quand l'écran n'est pas visible.
       vsync: this,
       duration: const Duration(seconds: 2),
-    )..repeat();
+    )..repeat(); // ..repeat() = cascade : démarre l'animation en boucle juste après la création.
+    // addListener abonne _onStateChanged au service : à chaque fois que le
+    // service notifie un changement, notre callback sera rappelé.
     _navService.addListener(_onStateChanged);
   }
 
@@ -82,6 +100,11 @@ class _NavigationScreenState extends State<NavigationScreen>
   /// nouvel état de navigation. Appelé par le [NavigationService] via le
   /// listener enregistré dans [initState].
   void _onStateChanged() {
+    // mounted = vrai tant que le widget est encore affiché. On le vérifie car
+    // une notification peut arriver après que l'écran a été quitté ; appeler
+    // setState dans ce cas planterait.
+    // setState(() {}) signale à Flutter que l'état a changé : il rappellera
+    // build() pour redessiner cet écran avec les nouvelles données du service.
     if (mounted) setState(() {});
   }
 
@@ -91,8 +114,13 @@ class _NavigationScreenState extends State<NavigationScreen>
   /// libère le [_navService] et l'[_pulseController], puis appelle le `dispose`
   /// parent. Appelé une seule fois par le framework Flutter lorsque l'état est
   /// retiré définitivement de l'arbre.
+  // dispose() est appelé UNE FOIS quand l'écran est retiré définitivement.
+  // Symétrique de initState : on y libère les ressources pour éviter les fuites
+  // mémoire (désabonnement du service, libération des controllers).
   @override
   void dispose() {
+    // removeListener : on se désabonne du service (sinon il garderait une
+    // référence vers ce State détruit).
     _navService.removeListener(_onStateChanged);
     _navService.dispose();
     _pulseController.dispose();
@@ -112,6 +140,8 @@ class _NavigationScreenState extends State<NavigationScreen>
     } else {
       await _navService.start();
     }
+    // setState avec une fonction fléchée (=>) : on modifie _isRunning puis
+    // Flutter redessine pour refléter le nouvel état du bouton.
     setState(() => _isRunning = !_isRunning);
   }
 
@@ -125,12 +155,17 @@ class _NavigationScreenState extends State<NavigationScreen>
   /// arrêtée).
   Future<void> _exportData() async {
     final path = await _navService.exportData();
+    // Après un await, l'écran a pu être fermé : on sort si non monté avant
+    // d'utiliser `context` (qui ne serait plus valide).
     if (!mounted) return;
+    // showDialog affiche une boîte de dialogue par-dessus l'écran courant.
+    // Le builder décrit son contenu ; `(_)` ignore le BuildContext fourni.
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF141B2D),
         title: Text(
+          // Ternaire (condition ? siVrai : siFaux) : titre selon le succès.
           path != null ? 'EXPORT RÉUSSI' : 'ERREUR EXPORT',
           style: TextStyle(
             color: path != null
@@ -149,6 +184,7 @@ class _NavigationScreenState extends State<NavigationScreen>
         ),
         actions: [
           TextButton(
+            // Navigator.pop ferme l'élément du dessus (ici la boîte de dialogue).
             onPressed: () => Navigator.pop(context),
             child: const Text('OK', style: TextStyle(color: Color(0xFF00E5FF))),
           ),
@@ -165,6 +201,9 @@ class _NavigationScreenState extends State<NavigationScreen>
   /// sur le bouton VOIR TRACÉ.
   void _openTrace() {
     final state = _navService.state;
+    // Navigator.push empile un nouvel écran par-dessus l'actuel (navigation).
+    // MaterialPageRoute décrit la transition d'écran et construit la page
+    // cible via son builder.
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -184,6 +223,7 @@ class _NavigationScreenState extends State<NavigationScreen>
   /// d'un appui sur le bouton DERNIER TRACE VS ARCHIVE.
   void _openLastArchivedVSTrace() {
     final archived = _navService.lastArchivedVSTrace;
+    // Garde anti-null : s'il n'y a aucun tracé archivé, on n'ouvre rien.
     if (archived == null) return;
     Navigator.push(
       context,
@@ -234,19 +274,31 @@ class _NavigationScreenState extends State<NavigationScreen>
   /// de calibration (uniquement en mode calibrating), les boutons de contrôle et
   /// le panneau de debug (si [_showDebug]). Appelé par le framework Flutter à
   /// chaque reconstruction (notamment après [_onStateChanged]).
+  // build() décrit l'interface sous forme d'un arbre de widgets imbriqués.
+  // En Flutter, l'UI est du CODE : on retourne des objets Widget plutôt que
+  // d'écrire du HTML/XML. Flutter rappelle build() à chaque setState.
   @override
   Widget build(BuildContext context) {
     final state = _navService.state;
+    // Scaffold : structure de base d'un écran Material (corps, app bar, etc.).
     return Scaffold(
+      // SafeArea évite que le contenu passe sous l'encoche / la barre système.
       body: SafeArea(
+        // Column empile ses enfants verticalement.
         child: Column(
           children: [
+            // Les helpers _buildXxx retournent chacun un sous-arbre de widgets,
+            // une façon de découper le build() en morceaux lisibles.
             _buildHeader(state),
+            // Expanded fait occuper à son enfant tout l'espace vertical restant
+            // dans la Column (ici la zone défilante sous l'en-tête fixe).
             Expanded(
+              // SingleChildScrollView rend son contenu défilable verticalement.
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   children: [
+                    // SizedBox sert ici de simple espace vertical fixe.
                     const SizedBox(height: 12),
                     _buildStatusBanner(state),
                     const SizedBox(height: 16),
@@ -256,6 +308,8 @@ class _NavigationScreenState extends State<NavigationScreen>
                     const SizedBox(height: 12),
                     _buildConfidenceBar(state),
                     const SizedBox(height: 16),
+                    // `if` dans une liste de widgets : insère ce widget seulement
+                    // si la condition est vraie (sinon rien n'est ajouté).
                     if (state.mode == NavigationMode.calibrating)
                       _buildCalibrationCard(state),
                     _buildControlButtons(state),
@@ -316,7 +370,10 @@ class _NavigationScreenState extends State<NavigationScreen>
               color: Colors.white,
             ),
           ),
+          // Spacer pousse l'élément suivant à l'extrémité de la Row.
           const Spacer(),
+          // GestureDetector rend un widget non cliquable (ici une icône)
+          // réactif au tap. onTap bascule _showDebug puis setState redessine.
           GestureDetector(
             onTap: () => setState(() => _showDebug = !_showDebug),
             child: Icon(
@@ -370,6 +427,9 @@ class _NavigationScreenState extends State<NavigationScreen>
         statusIcon = Icons.compare_arrows;
     }
 
+    // AnimatedBuilder reconstruit seulement son `builder` à chaque tick de
+    // l'animation, sans reconstruire l'enfant `child` (optimisation). Ici on
+    // anime l'opacité pour faire clignoter la bannière.
     return AnimatedBuilder(
       animation: _pulseController,
       builder: (context, child) {
@@ -442,6 +502,8 @@ class _NavigationScreenState extends State<NavigationScreen>
               _coordColumn('LON', state.longitude.toStringAsFixed(6)),
             ],
           ),
+          // `if (...) ...[ ]` : le spread `...` injecte PLUSIEURS widgets d'un
+          // coup dans la liste, conditionnellement (ici un espace + un badge).
           if (state.mode == NavigationMode.deadReckoning) ...[
             const SizedBox(height: 10),
             Container(
@@ -494,6 +556,8 @@ class _NavigationScreenState extends State<NavigationScreen>
   /// km/h), le temps écoulé depuis la dernière mise à jour GPS (en secondes) et
   /// l'état de mouvement (ARRÊT ou MOUV.). Appelé par [build].
   Widget _buildMetricsRow(NavigationState state) {
+    // Row aligne ses enfants horizontalement. Chaque Expanded prend une part
+    // égale de la largeur, pour répartir les trois tuiles côte à côte.
     return Row(
       children: [
         Expanded(
@@ -537,6 +601,7 @@ class _NavigationScreenState extends State<NavigationScreen>
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
                   color: Colors.white)),
+          // `if` simple dans la liste : affiche l'unité seulement si fournie.
           if (unit.isNotEmpty)
             Text(unit,
                 style: const TextStyle(fontSize: 10, color: Colors.white38)),
@@ -685,6 +750,8 @@ class _NavigationScreenState extends State<NavigationScreen>
           width: double.infinity,
           height: 54,
           child: ElevatedButton.icon(
+            // onPressed reçoit la fonction à exécuter au clic (sans parenthèses :
+            // on passe la référence, on ne l'appelle pas tout de suite).
             onPressed: _toggleNavigation,
             icon: Icon(_isRunning ? Icons.stop : Icons.play_arrow),
             label: Text(
@@ -704,6 +771,8 @@ class _NavigationScreenState extends State<NavigationScreen>
         ),
         const SizedBox(height: 10),
         // Boutons mode VS + auto-collecte (affichés quand en cours et calibré)
+        // Spread conditionnel : ce bloc entier de widgets n'est inséré que si
+        // la navigation tourne ET est calibrée.
         if (_isRunning && state.isCalibrated) ...[
           const SizedBox(height: 10),
           // Bouton VS manuel — masqué pendant l'auto-collecte
@@ -735,6 +804,8 @@ class _NavigationScreenState extends State<NavigationScreen>
                         const SizedBox(width: 8),
                         Expanded(
                           child: OutlinedButton.icon(
+                            // onPressed = null DÉSACTIVE le bouton (grisé). Ici
+                            // on l'active seulement si le GPS est disponible.
                             onPressed: state.gpsAvailable
                                 ? () {
                                     _navService.restartVSMode();
@@ -796,6 +867,7 @@ class _NavigationScreenState extends State<NavigationScreen>
             ),
           const SizedBox(height: 8),
           // Bouton d'auto-collecte
+          // if/else dans la liste : on affiche soit le statut, soit le bouton.
           if (_navService.isAutoCollecting)
             _buildAutoCollectStatus()
           else

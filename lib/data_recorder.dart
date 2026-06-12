@@ -1,4 +1,6 @@
+// 'dart:io' donne accès au système de fichiers (File, Directory) et à la plateforme (Platform).
 import 'dart:io';
+// path_provider fournit les chemins des dossiers de l'app selon le téléphone (Android/iOS).
 import 'package:path_provider/path_provider.dart';
 
 /// Enregistrement d'un échantillon de données brutes à un instant donné.
@@ -36,6 +38,7 @@ class RawDataRecord {
 
   /// Mesures GPS de référence (vérité-terrain), nulles si aucune mesure GPS
   /// n'était disponible pour cet échantillon.
+  // 'double?' (avec le '?') = type nullable : la valeur peut être un nombre OU null.
   final double? gpsLat, gpsLon, gpsSpeed, gpsAccuracy;
 
   /// Mode de fonctionnement courant de l'estimation (ex. GPS, inertiel).
@@ -84,6 +87,8 @@ class RawDataRecord {
   /// champs vides. Appelé par [DataRecorder.exportCSV] pour chaque
   /// enregistrement.
   String toCsvRow() {
+    // On crée une liste de valeurs, puis '.join(',')' (en bas) les colle en une seule
+    // chaîne séparée par des virgules. 'toStringAsFixed(n)' formate un double avec n décimales.
     return [
       timestampMs,
       axRaw.toStringAsFixed(6),
@@ -100,13 +105,15 @@ class RawDataRecord {
       heading.toStringAsFixed(2),
       confidence.toStringAsFixed(4),
       uncertainty.toStringAsFixed(4),
+      // '?.' = appel conditionnel : si gpsLat est null, on n'appelle pas la méthode et le résultat est null.
+      // '?? ' = valeur par défaut : si la gauche est null, on prend la droite (ici une chaîne vide).
       gpsLat?.toStringAsFixed(8) ?? '',
       gpsLon?.toStringAsFixed(8) ?? '',
       gpsSpeed?.toStringAsFixed(4) ?? '',
       gpsAccuracy?.toStringAsFixed(2) ?? '',
       mode,
       isStationary ? '1' : '0',
-    ].join(',');
+    ].join(','); // colle tous les éléments de la liste en une seule ligne CSV.
   }
 }
 
@@ -139,6 +146,7 @@ class DataRecorder {
 
   /// Instant de démarrage de la session courante, ou null si aucune session
   /// n'a été démarrée.
+  // 'DateTime?' : objet date/heure pouvant être null tant qu'aucune session n'a démarré.
   DateTime? _sessionStart;
 
   /// Démarre une nouvelle session d'enregistrement.
@@ -149,7 +157,7 @@ class DataRecorder {
   void startRecording() {
     _records.clear();
     _isRecording = true;
-    _sessionStart = DateTime.now();
+    _sessionStart = DateTime.now(); // DateTime.now() capture l'instant présent du téléphone.
   }
 
   /// Arrête la session d'enregistrement en cours.
@@ -187,6 +195,8 @@ class DataRecorder {
   ///
   /// Getter sans paramètre. Renvoie [Duration.zero] si aucune session n'a été
   /// démarrée. Utilisé par l'interface pour afficher le temps d'enregistrement.
+  // '_sessionStart!' : le '!' affirme à Dart que la valeur n'est PAS null ici
+  // (on l'a vérifié juste avant). 'difference' donne le temps écoulé entre deux dates.
   Duration get sessionDuration =>
       _sessionStart != null ? DateTime.now().difference(_sessionStart!) : Duration.zero;
 
@@ -195,11 +205,17 @@ class DataRecorder {
   /// Ne prend aucun paramètre. Renvoie un [Future] sur le [Directory] cible :
   /// le stockage externe sur Android lorsqu'il est disponible, sinon le
   /// répertoire des documents de l'application. Appelé par [exportCSV].
+  // 'async' marque une fonction asynchrone : elle renvoie un 'Future' (une valeur
+  // qui arrivera plus tard) et peut utiliser 'await' pour attendre une opération longue.
   Future<Directory> getExportDirectory() async {
     Directory? dir;
+    // Platform.isAndroid : vrai si l'app tourne sur Android.
     if (Platform.isAndroid) {
+      // 'await' met en pause jusqu'à obtenir le dossier de stockage externe (visible dans le gestionnaire de fichiers).
       dir = await getExternalStorageDirectory();
     }
+    // '??=' : assigne seulement si 'dir' est null. getApplicationDocumentsDirectory()
+    // renvoie un dossier privé à l'app (invisible pour l'utilisateur sans explorateur).
     dir ??= await getApplicationDocumentsDirectory();
     return dir;
   }
@@ -217,24 +233,32 @@ class DataRecorder {
     if (_records.isEmpty) return null;
 
     try {
+      // 'await' attend que le dossier cible soit déterminé avant de continuer.
       final dir = await getExportDirectory();
 
       final now = DateTime.now();
       final tag = sessionTag.isNotEmpty ? '_$sessionTag' : '';
+      // '$now.year' insère une valeur dans la chaîne (interpolation). 'padLeft(2, '0')'
+      // complète à gauche avec des zéros (ex. 9 -> "09") pour un nom de fichier propre.
       final filename =
           'imu_${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}'
           '_${now.hour.toString().padLeft(2, '0')}-${now.minute.toString().padLeft(2, '0')}-${now.second.toString().padLeft(2, '0')}$tag.csv';
+      // 'File(...)' désigne un fichier à partir de son chemin (dossier + nom). Il n'est pas encore écrit.
       final file = File('${dir.path}/$filename');
 
+      // StringBuffer : accumule du texte efficacement (plus rapide que concaténer des String).
       final buffer = StringBuffer();
-      buffer.writeln(_csvHeader);
+      buffer.writeln(_csvHeader); // 'writeln' écrit la ligne puis un retour à la ligne.
+      // Parcourt chaque enregistrement et ajoute sa ligne CSV au buffer.
       for (final record in _records) {
         buffer.writeln(record.toCsvRow());
       }
 
+      // 'writeAsString' écrit réellement le contenu sur le disque du téléphone (opération asynchrone, d'où 'await').
       await file.writeAsString(buffer.toString());
       return file.path;
     } catch (e) {
+      // En cas d'erreur (ex. permission refusée), on renvoie null plutôt que de planter.
       return null;
     }
   }
