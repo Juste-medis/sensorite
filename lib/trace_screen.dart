@@ -4,44 +4,97 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'navigation_service.dart';
 
+/// Écran affichant le tracé d'une session de navigation enregistrée.
+///
+/// Compare visuellement, sur une carte, la trajectoire estimée par l'IMU
+/// (centrale inertielle) à la trajectoire de référence du GPS, et affiche
+/// des statistiques (nombre de points, distances parcourues, écart final).
+///
+/// Reçoit en paramètres :
+/// - [trail] : la liste complète des enregistrements de position estimés
+///   (mélange de points IMU et éventuellement GPS, distingués via `fromGPS`).
+/// - [gpsTrail] : la liste des enregistrements de position issus du GPS.
+///
+/// Cet écran est typiquement ouvert (via une navigation) à la fin ou pendant
+/// une session pour visualiser et comparer les deux trajectoires.
 class TraceScreen extends StatefulWidget {
+  /// Liste des enregistrements de position estimés (trace IMU/fusion).
   final List<PositionRecord> trail;
+
+  /// Liste des enregistrements de position de référence issus du GPS.
   final List<PositionRecord> gpsTrail;
 
+  /// Construit l'écran de tracé.
+  ///
+  /// Prend [trail] (trace estimée) et [gpsTrail] (trace GPS), tous deux
+  /// obligatoires. Appelé par le widget parent qui navigue vers cet écran.
   const TraceScreen({
     super.key,
     required this.trail,
     required this.gpsTrail,
   });
 
+  /// Crée l'état mutable [_TraceScreenState] associé à ce widget.
+  ///
+  /// Appelé automatiquement par le framework Flutter lors de l'insertion
+  /// du widget dans l'arbre. Renvoie l'instance d'état qui gère la carte.
   @override
   State<TraceScreen> createState() => _TraceScreenState();
 }
 
+/// État de [TraceScreen] : gère le contrôleur de carte, l'affichage des
+/// statistiques et la construction de la vue cartographique des trajectoires.
 class _TraceScreenState extends State<TraceScreen> {
+  /// Contrôleur de la carte [FlutterMap], utilisé pour recentrer/zoomer.
   late final MapController _mapController;
+
+  /// Indique si le panneau de statistiques est actuellement affiché.
   bool _showStats = true;
 
+  /// Initialise l'état du widget.
+  ///
+  /// Ne prend pas de paramètre et ne renvoie rien. Crée le [MapController].
+  /// Appelé une seule fois par le framework lors de la création de l'état,
+  /// avant le premier `build`.
   @override
   void initState() {
     super.initState();
     _mapController = MapController();
   }
 
+  /// Libère les ressources de l'état.
+  ///
+  /// Ne prend pas de paramètre et ne renvoie rien. Détruit le [MapController]
+  /// pour éviter les fuites mémoire. Appelé par le framework lorsque le widget
+  /// est retiré définitivement de l'arbre.
   @override
   void dispose() {
     _mapController.dispose();
     super.dispose();
   }
 
+  /// Convertit la trace GPS en liste de coordonnées [LatLng].
+  ///
+  /// Ne prend pas de paramètre. Renvoie la liste des points GPS prêts à être
+  /// tracés sur la carte. Utilisé par `build` et `_stats`.
   List<LatLng> get _gpsPoints =>
       widget.gpsTrail.map((p) => LatLng(p.lat, p.lon)).toList();
 
+  /// Convertit la trace estimée (IMU) en liste de coordonnées [LatLng].
+  ///
+  /// Ne prend pas de paramètre. Filtre [TraceScreen.trail] pour ne garder que
+  /// les points non issus du GPS (`fromGPS == false`), puis les convertit en
+  /// [LatLng]. Renvoie la liste des points IMU. Utilisé par `build` et `_stats`.
   List<LatLng> get _imuPoints => widget.trail
       .where((p) => !p.fromGPS)
       .map((p) => LatLng(p.lat, p.lon))
       .toList();
 
+  /// Calcule le centre géographique moyen des deux trajectoires.
+  ///
+  /// Ne prend pas de paramètre. Fait la moyenne des latitudes et longitudes de
+  /// tous les points GPS et IMU. Renvoie le [LatLng] central, ou `null` si
+  /// aucune donnée n'est disponible. Utilisé par `build` pour centrer la carte.
   LatLng? get _center {
     final all = [...widget.gpsTrail, ...widget.trail.where((p) => !p.fromGPS)];
     if (all.isEmpty) return null;
@@ -50,6 +103,13 @@ class _TraceScreenState extends State<TraceScreen> {
     return LatLng(lat, lon);
   }
 
+  /// Calcule les statistiques de comparaison entre les traces IMU et GPS.
+  ///
+  /// Ne prend pas de paramètre. Calcule le nombre de points, la distance
+  /// parcourue (somme des distances entre points consécutifs) pour chaque
+  /// trace, et l'écart final (distance entre le dernier point IMU et le point
+  /// GPS le plus proche dans le temps). Renvoie une map libellé -> valeur
+  /// formatée. Utilisé par `_buildStatsPanel` pour alimenter le panneau.
   Map<String, String> get _stats {
     final imu = _imuPoints;
     final gps = _gpsPoints;
@@ -66,7 +126,7 @@ class _TraceScreenState extends State<TraceScreen> {
 
     String driftStr = '-';
     if (gps.isNotEmpty && imu.isNotEmpty) {
-      // Find closest GPS point in time to last IMU point
+      // Trouve le point GPS le plus proche dans le temps du dernier point IMU
       final lastImuTime = widget.trail.lastWhere((p) => !p.fromGPS).timestamp;
       PositionRecord closest = widget.gpsTrail.first;
       for (final g in widget.gpsTrail) {
@@ -91,6 +151,12 @@ class _TraceScreenState extends State<TraceScreen> {
     };
   }
 
+  /// Calcule la distance en mètres entre deux points géographiques.
+  ///
+  /// Prend en paramètres [a] et [b], deux coordonnées [LatLng]. Utilise une
+  /// approximation équirectangulaire (rayon terrestre 6371 km) pour calculer
+  /// la distance. Renvoie cette distance en mètres. Méthode statique appelée
+  /// par `_stats` pour cumuler les distances et mesurer l'écart final.
   static double _distMeters(LatLng a, LatLng b) {
     const r = 6371000.0;
     final dLat = (b.latitude - a.latitude) * pi / 180;
@@ -99,6 +165,17 @@ class _TraceScreenState extends State<TraceScreen> {
     return sqrt(pow(dLat * r, 2) + pow(dLon * r * cos(mLat), 2));
   }
 
+  /// Construit l'interface de l'écran de tracé.
+  ///
+  /// Prend en paramètre le [context] de construction. Renvoie un [Scaffold]
+  /// composé de : une barre supérieure avec la légende (GPS/IMU) et un bouton
+  /// pour afficher/masquer les statistiques ; un corps contenant soit un
+  /// message si aucune donnée n'est disponible, soit une carte [FlutterMap]
+  /// affichant les tuiles OpenStreetMap, la polyligne GPS (verte), la
+  /// polyligne IMU (orange pointillée) et les marqueurs (départ/arrivée GPS,
+  /// fin IMU) ; le panneau de statistiques en bas si activé ; et un bouton
+  /// flottant pour ajuster le cadrage de la carte sur l'ensemble des points.
+  /// Appelé par le framework Flutter à chaque (re)construction de l'écran.
   @override
   Widget build(BuildContext context) {
     final center = _center;
@@ -116,7 +193,7 @@ class _TraceScreenState extends State<TraceScreen> {
           style: TextStyle(fontSize: 15, letterSpacing: 3, fontWeight: FontWeight.w600),
         ),
         actions: [
-          // Legend
+          // Légende
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: Row(
@@ -155,13 +232,13 @@ class _TraceScreenState extends State<TraceScreen> {
                       initialZoom: 16,
                     ),
                     children: [
-                      // OpenStreetMap tiles (free, no API key)
+                      // Tuiles OpenStreetMap (gratuites, sans clé d'API)
                       TileLayer(
                         urlTemplate:
                             'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                         userAgentPackageName: 'com.example.sensoritetest',
                       ),
-                      // GPS track (green)
+                      // Trace GPS (verte)
                       if (gpsPoints.length > 1)
                         PolylineLayer(
                           polylines: [
@@ -172,7 +249,7 @@ class _TraceScreenState extends State<TraceScreen> {
                             ),
                           ],
                         ),
-                      // IMU track (orange)
+                      // Trace IMU (orange)
                       if (imuPoints.length > 1)
                         PolylineLayer(
                           polylines: [
@@ -186,7 +263,7 @@ class _TraceScreenState extends State<TraceScreen> {
                             ),
                           ],
                         ),
-                      // Markers: start GPS, end GPS, end IMU
+                      // Marqueurs : départ GPS, arrivée GPS, fin IMU
                       MarkerLayer(
                         markers: [
                           if (gpsPoints.isNotEmpty)
@@ -224,6 +301,12 @@ class _TraceScreenState extends State<TraceScreen> {
     );
   }
 
+  /// Construit un élément de légende (trait coloré + libellé).
+  ///
+  /// Prend en paramètres [color] (couleur du trait et du texte) et [label]
+  /// (texte affiché, ex. « GPS » ou « IMU »). Renvoie une [Row] affichant un
+  /// petit trait coloré suivi du libellé. Appelé par `build` pour composer la
+  /// légende dans la barre supérieure.
   Widget _legendDot(Color color, String label) {
     return Row(
       children: [
@@ -241,6 +324,13 @@ class _TraceScreenState extends State<TraceScreen> {
     );
   }
 
+  /// Construit un marqueur circulaire à placer sur la carte.
+  ///
+  /// Prend en paramètres [point] (position [LatLng] du marqueur), [color]
+  /// (couleur de fond du cercle) et [label] (lettre affichée au centre, ex.
+  /// « D » pour départ, « A » pour arrivée). Renvoie un [Marker] rond à bordure
+  /// blanche contenant le libellé. Appelé par `build` pour marquer le départ et
+  /// l'arrivée GPS ainsi que la fin de la trace IMU.
   Marker _marker(LatLng point, Color color, String label) {
     return Marker(
       point: point,
@@ -266,6 +356,12 @@ class _TraceScreenState extends State<TraceScreen> {
     );
   }
 
+  /// Construit le panneau de statistiques affiché en bas de l'écran.
+  ///
+  /// Ne prend pas de paramètre. Récupère les statistiques via `_stats` et
+  /// renvoie un [Container] (bandeau sombre) contenant une cellule par
+  /// statistique, réparties horizontalement. Appelé par `build` lorsque le
+  /// panneau est activé et que des données sont disponibles.
   Widget _buildStatsPanel() {
     final stats = _stats;
     return Container(
@@ -283,6 +379,13 @@ class _TraceScreenState extends State<TraceScreen> {
     );
   }
 
+  /// Construit une cellule de statistique (valeur au-dessus du libellé).
+  ///
+  /// Prend en paramètres [label] (libellé de la statistique, ex. « DIST. GPS »)
+  /// et [value] (valeur formatée à afficher). Renvoie une [Column] affichant la
+  /// valeur en gras puis le libellé ; la valeur est mise en évidence en orange
+  /// lorsque le libellé est « ÉCART ». Appelé par `_buildStatsPanel` pour
+  /// chaque statistique du panneau.
   Widget _statCell(String label, String value) {
     final isEcart = label == 'ÉCART';
     return Column(

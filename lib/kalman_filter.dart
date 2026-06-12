@@ -100,6 +100,11 @@ class IMUKalmanFilter {
   double _speedRefMps = 0.0;
   bool _hasSpeedRef = false;
 
+  /// Construit le filtre : état `x` initialisé à zéro, covariance `P` à forte
+  /// incertitude (identité × 100), matrices de bruit `Q`, `R_gps`, `R_imu`
+  /// préparées via [_initProcessNoise] et [_initMeasurementNoise].
+  ///
+  /// Appelé une seule fois, à la création de `NavigationService`.
   IMUKalmanFilter()
       : x = List.filled(n, 0.0),
         P = _identity(n, 100.0),
@@ -110,6 +115,11 @@ class IMUKalmanFilter {
     _initMeasurementNoise();
   }
 
+  /// Remplit la matrice de bruit de process `Q` : l'incertitude que le modèle
+  /// ajoute à la covariance `P` à chaque prédiction (position / vitesse /
+  /// accélération / cap). Valeurs réglées pour un mouvement piéton-véhicule.
+  ///
+  /// Ne prend rien, ne renvoie rien. Appelé par le constructeur.
   void _initProcessNoise() {
     // Process noise - tuned for pedestrian/vehicle motion
     Q[0][0] = 0.5; // x position noise
@@ -121,6 +131,11 @@ class IMUKalmanFilter {
     Q[6][6] = 0.1; // yaw noise
   }
 
+  /// Remplit les matrices de bruit de mesure : `R_gps` (confiance dans le GPS,
+  /// position + vitesse) et `R_imu` (confiance dans l'accéléromètre + gyro).
+  /// Plus la valeur est grande, moins on fait confiance à la mesure.
+  ///
+  /// Ne prend rien, ne renvoie rien. Appelé par le constructeur.
   void _initMeasurementNoise() {
     // GPS measurement noise (position in meters, velocity in m/s)
     R_gps[0][0] = 4.0; // x position (2m std dev)
@@ -134,7 +149,17 @@ class IMUKalmanFilter {
     R_imu[2][2] = 0.01; // yaw rate
   }
 
-  /// Add calibration sample (call while device is stationary)
+  /// Accumule un échantillon de calibration (à appeler téléphone immobile).
+  ///
+  /// Paramètres : [ax],[ay],[az] accéléromètre brut (m/s²), [gx],[gy],[gz]
+  /// gyroscope brut (rad/s).
+  ///
+  /// Au bout de [calibrationTarget] (100) échantillons, calcule les **biais**
+  /// = moyenne de chaque axe (la gravité est retirée sur Z), puis passe
+  /// `isCalibrated` à `true`. Ne fait plus rien une fois calibré.
+  ///
+  /// Ne renvoie rien. Appelé par `_processIMU()` tant que le filtre n'est pas
+  /// calibré (phase de démarrage, à l'arrêt).
   void addCalibrationSample(
       double ax, double ay, double az, double gx, double gy, double gz) {
     if (isCalibrated) return;
@@ -161,9 +186,17 @@ class IMUKalmanFilter {
     }
   }
 
+  /// Avancement de la calibration, entre 0 et 1
+  /// (`_calibrationSamples / 100`). Lu par l'UI pour la barre de progression.
   double get calibrationProgress => _calibrationSamples / calibrationTarget;
 
-  /// Low-pass filter for accelerometer data
+  /// Filtre passe-bas (moyenne mobile exponentielle) sur l'accéléromètre, pour
+  /// atténuer le bruit haute fréquence (vibrations) : `filtré = 0,1·brut +
+  /// 0,9·ancien`.
+  ///
+  /// Paramètres : [ax],[ay],[az] accélération brute des 3 axes.
+  /// Renvoie la liste `[ax, ay, az]` filtrée.
+  /// Appelé par [predict] à chaque pas.
   List<double> _lowPassFilter(double ax, double ay, double az) {
     if (!_lowPassInitialized) {
       _filteredAx = ax;
@@ -179,7 +212,16 @@ class IMUKalmanFilter {
     return [_filteredAx, _filteredAy, _filteredAz];
   }
 
-  /// Detect if the device is stationary using accelerometer variance
+  /// Détecte l'immobilité du véhicule (ex. feu rouge) pour éviter la dérive
+  /// à l'arrêt.
+  ///
+  /// Paramètres : mesure accéléromètre [ax],[ay],[az] et gyroscope [gx],[gy],
+  /// [gz]. Calcule la **variance** de la norme d'accélération sur une fenêtre
+  /// de 20 échantillons ; met `isStationary` à `true` si variance faible ET
+  /// norme ≈ g ET gyroscope faible, de façon stable (50 échantillons).
+  ///
+  /// Ne renvoie rien (met à jour le champ `isStationary`).
+  /// Appelé par [predict] à chaque pas.
   void _updateStationaryDetection(
       double ax, double ay, double az, double gx, double gy, double gz) {
     double mag = sqrt(ax * ax + ay * ay + az * az);
@@ -203,10 +245,22 @@ class IMUKalmanFilter {
     }
   }
 
-  /// Predict step using IMU data
-  /// [ax, ay, az]: accelerometer in m/s² (device frame)
-  /// [gx, gy, gz]: gyroscope in rad/s (device frame)
-  /// [dt]: time step in seconds
+  /// **Étape de prédiction — ma dérivation hybride.** Fait avancer l'état d'un
+  /// pas de temps à partir des capteurs inertiels, SANS double-intégrer
+  /// l'accélération (qui divergerait en t²).
+  ///
+  /// Paramètres : [ax],[ay],[az] accéléromètre (m/s², repère téléphone),
+  /// [gx],[gy],[gz] gyroscope (rad/s, repère téléphone), [dt] pas de temps (s).
+  ///
+  /// Déroulé : (1) rejette un [dt] invalide ; (2) retire les biais ;
+  /// (3) deadband + clip du gyro `gz` ; (4) passe-bas accéléro ; (5) détection
+  /// d'immobilité ; (6) **hybride** : cap intégré depuis `gz`, vitesse
+  /// verrouillée sur la dernière vitesse GPS (`_speedRefMps`), projection
+  /// module × direction, puis intégration unique de la position ; (7) propage
+  /// la covariance `P = F·P·Fᵀ + Q·dt` ; (8) fait décroître `confidence`.
+  ///
+  /// Ne renvoie rien (met à jour `x` et `P`).
+  /// Appelé par `_processIMU()` à **50 Hz**.
   void predict(double ax, double ay, double az, double gx, double gy, double gz,
       double dt) {
     if (dt <= 0 || dt > 1.0) return; // Reject invalid time steps
@@ -227,7 +281,7 @@ class IMUKalmanFilter {
       gz = -_yawRateClip;
     }
 
-    // Low-pass filter
+    // Low-pass filter 
     var filtered = _lowPassFilter(ax, ay, az);
     ax = filtered[0];
     ay = filtered[1];
@@ -304,11 +358,19 @@ class IMUKalmanFilter {
     confidence = max(0.05, exp(-0.02 * timeSinceLastGPS));
   }
 
-  /// Update step with GPS measurement
-  /// [lat, lon]: GPS coordinates in degrees
-  /// [speed]: GPS speed in m/s
-  /// [bearing]: GPS bearing in degrees
-  /// [accuracy]: GPS horizontal accuracy in meters
+  /// **Étape de correction** : fusionne une mesure GPS avec la prédiction.
+  ///
+  /// Paramètres : [lat],[lon] position GPS (degrés), [speed] vitesse (m/s),
+  /// [bearing] cap (degrés), [accuracy] précision horizontale (m).
+  ///
+  /// Convertit le GPS en local, construit la mesure `z = [x,y,vx,vy]`, calcule
+  /// l'innovation `y = z − H·x`, le gain de Kalman `K`, met à jour `x` et `P`,
+  /// puis recale le cap depuis le bearing (ou le vecteur vitesse si le bearing
+  /// est indisponible). Le bruit `R` est adapté à [accuracy]. Au tout premier
+  /// fix, pose le point de référence et délègue à [snapToGPS].
+  ///
+  /// Ne renvoie rien. Appelé par `_onGPSUpdate()` à chaque fix GPS,
+  /// **hors mode VS**.
   void updateGPS(
       double lat, double lon, double speed, double bearing, double accuracy) {
     setSpeedReference(speed);
@@ -389,8 +451,16 @@ class IMUKalmanFilter {
     confidence = 1.0;
   }
 
-  /// Force the EKF state to the latest reliable GPS fix before entering
-  /// dead reckoning. This gives tunnel mode a clean position, velocity and yaw.
+  /// **Écrase** l'état pour le coller exactement sur le dernier fix GPS fiable,
+  /// avant d'entrer en navigation à l'estime. Donne au mode tunnel un point de
+  /// départ propre (position, vitesse, cap), contrairement à [updateGPS] qui
+  /// *mélange* prédiction et mesure.
+  ///
+  /// Paramètres : identiques à [updateGPS] ([lat],[lon],[speed],[bearing],
+  /// [accuracy]). Resserre la covariance `P` et remet `confidence` à 1.
+  ///
+  /// Ne renvoie rien. Appelé par `_snapKalmanToLastGPS()` (perte GPS, début de
+  /// mode VS, simulation) et par [updateGPS] au premier fix.
   void snapToGPS(
       double lat, double lon, double speed, double bearing, double accuracy) {
     setSpeedReference(speed);
@@ -430,9 +500,15 @@ class IMUKalmanFilter {
     confidence = 1.0;
   }
 
-  /// Non-Holonomic Constraint update: vehicle cannot move laterally.
-  /// Constrains the velocity component perpendicular to the heading to ~0.
-  /// Call this after each predict() step at IMU rate.
+  /// **Contrainte non-holonome** : une voiture ne peut pas glisser de côté.
+  /// Impose que la composante de vitesse perpendiculaire au cap soit ≈ 0.
+  ///
+  /// Ne prend pas de paramètre (lit l'état courant). Correction de Kalman
+  /// scalaire (mesure 1D) : covariance d'innovation `S`, gain `K`, mise à jour
+  /// `x -= K·vitesseLatérale`, puis réduction de `P`. Ne fait rien si non
+  /// calibré ou à l'arrêt.
+  ///
+  /// Ne renvoie rien. Appelé par `_processIMU()`, juste après chaque [predict].
   void updateNHC() {
     if (!isCalibrated || isStationary) return;
 
@@ -465,7 +541,12 @@ class IMUKalmanFilter {
     }
   }
 
-  /// Convert GPS coordinates to local ENU (East-North-Up) coordinates
+  /// Projette des coordonnées GPS en repère local plan **ENU** (East-North-Up),
+  /// en mètres par rapport au point de référence (`refLat`, `refLon`).
+  ///
+  /// Paramètres : [lat],[lon] en degrés.
+  /// Renvoie `[x_est, y_nord]` en mètres (`[0,0]` si pas de référence).
+  /// Appelé par [updateGPS] et [snapToGPS].
   List<double> gpsToLocal(double lat, double lon) {
     if (refLat == null || refLon == null) return [0, 0];
 
@@ -482,7 +563,11 @@ class IMUKalmanFilter {
     return [x, y];
   }
 
-  /// Convert local ENU coordinates back to GPS
+  /// Conversion inverse de [gpsToLocal] : du repère local (mètres) vers le GPS.
+  ///
+  /// Paramètres : [localX],[localY] en mètres.
+  /// Renvoie `[lat, lon]` en degrés.
+  /// Appelé par le getter [estimatedPosition].
   List<double> localToGPS(double localX, double localY) {
     if (refLat == null || refLon == null) return [0, 0];
 
@@ -495,20 +580,26 @@ class IMUKalmanFilter {
     return [refLat! + dLat * 180.0 / pi, refLon! + dLon * 180.0 / pi];
   }
 
-  /// Get current estimated GPS position
+  /// Position estimée actuelle convertie en GPS `[lat, lon]`.
+  /// Lue par `NavigationService` (état, trace, CSV).
   List<double> get estimatedPosition => localToGPS(x[0], x[1]);
 
-  /// Get current velocity magnitude in m/s
+  /// Module de la vitesse actuelle en m/s (`sqrt(vx² + vy²)`).
   double get speed => sqrt(x[2] * x[2] + x[3] * x[3]);
 
-  /// Get current heading in degrees
+  /// Cap actuel en degrés (cap navigation : 0° = Nord), converti depuis le yaw.
   double get heading => _yawToNavBearing(x[6]);
 
-  /// Get position uncertainty radius in meters
+  /// Rayon d'incertitude sur la position en mètres (`sqrt(P[0][0] + P[1][1])`).
+  /// Sert à dessiner le cercle d'incertitude sur la carte.
   double get positionUncertainty => sqrt(P[0][0] + P[1][1]);
 
-  /// Refresh speed reference from latest reliable GPS speed.
-  /// Used to stabilize dead-reckoning velocity scale.
+  /// Mémorise la dernière vitesse GPS fiable dans `_speedRefMps` (bornée
+  /// 0–70 m/s). **C'est l'entrée de la dérivation hybride** : la cible de
+  /// vitesse vers laquelle [predict] relaxe pendant la perte GPS.
+  ///
+  /// Paramètre : [speedMps] vitesse GPS (m/s) ; ignorée si négative/non finie.
+  /// Ne renvoie rien. Appelé par [updateGPS] et [snapToGPS].
   void setSpeedReference(double speedMps) {
     if (!speedMps.isFinite || speedMps < 0) return;
     _speedRefMps = speedMps.clamp(0.0, 70.0);
@@ -516,25 +607,31 @@ class IMUKalmanFilter {
   }
 
 
+  /// Matrice identité `size × size` multipliée par [scale]
+  /// (diagonale = [scale], reste = 0). Outil d'algèbre linéaire interne.
   static List<List<double>> _identity(int size, double scale) {
     return List.generate(
         size, (i) => List.generate(size, (j) => i == j ? scale : 0.0));
   }
 
+  /// Matrice nulle carrée `size × size`.
   static List<List<double>> _zeros(int size) {
     return List.generate(size, (_) => List.filled(size, 0.0));
   }
 
+  /// Matrice nulle rectangulaire `rows × cols`.
   static List<List<double>> _zeros2(int rows, int cols) {
     return List.generate(rows, (_) => List.filled(cols, 0.0));
   }
 
+  /// Transposée de la matrice [m] (lignes ↔ colonnes).
   static List<List<double>> _transpose(List<List<double>> m) {
     int rows = m.length;
     int cols = m[0].length;
     return List.generate(cols, (i) => List.generate(rows, (j) => m[j][i]));
   }
 
+  /// Produit matriciel `A · B` ([a] de taille m×k, [b] de taille k×p).
   static List<List<double>> _matMul(
       List<List<double>> a, List<List<double>> b) {
     int rows = a.length;
@@ -551,6 +648,7 @@ class IMUKalmanFilter {
     return result;
   }
 
+  /// Produit matrice × vecteur `M · v`. Renvoie un vecteur.
   static List<double> _matVecMul(List<List<double>> m, List<double> v) {
     return List.generate(m.length, (i) {
       double sum = 0;
@@ -561,24 +659,32 @@ class IMUKalmanFilter {
     });
   }
 
+  /// Somme matricielle terme à terme `A + B`.
   static List<List<double>> _matAdd(
       List<List<double>> a, List<List<double>> b) {
     return List.generate(
         a.length, (i) => List.generate(a[0].length, (j) => a[i][j] + b[i][j]));
   }
 
+  /// Différence matricielle terme à terme `A − B`.
   static List<List<double>> _matSub(
       List<List<double>> a, List<List<double>> b) {
     return List.generate(
         a.length, (i) => List.generate(a[0].length, (j) => a[i][j] - b[i][j]));
   }
 
+  /// Multiplie chaque terme de la matrice [m] par le scalaire [s].
   static List<List<double>> _matScale(List<List<double>> m, double s) {
     return List.generate(
         m.length, (i) => List.generate(m[0].length, (j) => m[i][j] * s));
   }
 
-  /// Invert a small matrix using Gauss-Jordan elimination
+  /// Inverse une petite matrice par élimination de Gauss-Jordan (pivot partiel).
+  ///
+  /// Paramètre : [matrix] carrée.
+  /// Renvoie la matrice inverse, ou **`null`** si la matrice est singulière
+  /// (non inversible) — l'appelant saute alors la mise à jour.
+  /// Utilisé par [updateGPS] pour inverser la covariance d'innovation `S`.
   static List<List<double>>? _invertMatrix(List<List<double>> matrix) {
     int n = matrix.length;
     var aug = List.generate(
@@ -622,28 +728,41 @@ class IMUKalmanFilter {
     return List.generate(n, (i) => List.generate(n, (j) => aug[i][j + n]));
   }
 
+  /// Moyenne arithmétique d'une liste de valeurs.
   static double _mean(List<double> values) {
     return values.reduce((a, b) => a + b) / values.length;
   }
 
+  /// Indique si le cap GPS est exploitable : vrai si [speed] > 1,5 m/s et
+  /// [bearing] valide (0–360). À basse vitesse, le cap GPS est trop bruité.
+  /// Utilisé par [updateGPS] et [snapToGPS].
   static bool _hasUsableBearing(double speed, double bearing) {
     return speed > 1.5 && bearing.isFinite && bearing >= 0 && bearing <= 360;
   }
 
+  /// Convertit un **cap navigation** (0° = Nord, sens horaire) en **yaw
+  /// mathématique** (0° = Est, sens trigo) : `(90 − bearing)·π/180`. En rad.
   static double _navBearingToYaw(double bearingDeg) {
     return _normalizeAngle((90.0 - bearingDeg) * pi / 180.0);
   }
 
+  /// Conversion inverse de [_navBearingToYaw] : yaw (rad) → cap navigation
+  /// (degrés, 0–360). Utilisé par le getter [heading].
   static double _yawToNavBearing(double yawRad) {
     final bearing = 90.0 - yawRad * 180.0 / pi;
     return (bearing % 360.0 + 360.0) % 360.0;
   }
 
+  /// Interpole entre deux angles [from] et [to] en gérant le passage par ±180°.
+  /// [alpha] = poids du nouvel angle (0 = reste à [from], 1 = va à [to]).
+  /// Sert à recaler doucement le cap dans [updateGPS]. Renvoie un angle en rad.
   static double _blendAngle(double from, double to, double alpha) {
     final delta = _normalizeAngle(to - from);
     return _normalizeAngle(from + alpha * delta);
   }
 
+  /// Ramène un angle dans l'intervalle ]−π, π]. Appelé partout où on manipule
+  /// le cap pour éviter l'accumulation hors bornes.
   static double _normalizeAngle(double angle) {
     while (angle > pi) {
       angle -= 2 * pi;
@@ -654,7 +773,11 @@ class IMUKalmanFilter {
     return angle;
   }
 
-  /// Reset the filter state
+  /// Réinitialise **tout** le filtre à son état de départ : état `x`,
+  /// covariance `P`, biais, calibration, références GPS et métriques.
+  ///
+  /// Ne prend rien, ne renvoie rien. Appelé par `NavigationService.start()`
+  /// et `NavigationService.reset()` en début de session.
   void reset() {
     x = List.filled(n, 0.0);
     P = _identity(n, 100.0);

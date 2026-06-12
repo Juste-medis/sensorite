@@ -2,6 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'navigation_screen.dart';
 
+/// Point d'entrée de l'application Flutter de navigation GPS + IMU avec filtre de Kalman.
+///
+/// Ne prend aucun paramètre et ne renvoie rien.
+/// Cette fonction :
+/// - initialise la liaison entre Flutter et le moteur natif via [WidgetsFlutterBinding.ensureInitialized] ;
+/// - verrouille l'orientation de l'écran en mode portrait ;
+/// - configure le style de la barre système (transparente, icônes claires) ;
+/// - lance l'application en montant le widget racine [IMUNavigatorApp].
+///
+/// Elle est appelée automatiquement par le moteur Dart/Flutter au démarrage de l'application.
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -12,9 +22,30 @@ void main() {
   runApp(const IMUNavigatorApp());
 }
 
+/// Widget racine de l'application « IMU Navigator ».
+///
+/// Il s'agit d'un [StatelessWidget] : son contenu ne change pas au cours du temps.
+/// Il configure le [MaterialApp] (titre, thème sombre, couleurs, police) et
+/// définit l'écran d'accueil de l'application sur [NavigationScreen].
+/// Il est instancié une seule fois par [main] lors du lancement de l'application.
 class IMUNavigatorApp extends StatelessWidget {
+  /// Construit le widget racine [IMUNavigatorApp].
+  ///
+  /// Le paramètre [key] est transmis au constructeur parent pour identifier
+  /// le widget dans l'arbre de widgets. Ne renvoie pas de valeur (constructeur).
   const IMUNavigatorApp({super.key});
 
+  /// Construit l'interface racine de l'application.
+  ///
+  /// Prend en paramètre le [context] fourni par le framework Flutter.
+  /// Renvoie un [MaterialApp] configuré avec :
+  /// - le titre « IMU Navigator » et la bannière de debug masquée ;
+  /// - un thème sombre personnalisé (fond bleu nuit, couleurs primaire/secondaire,
+  ///   police monospace, Material 3) ;
+  /// - l'écran d'accueil [NavigationScreen].
+  ///
+  /// Cette méthode est appelée automatiquement par Flutter à chaque fois que
+  /// le widget doit être (re)dessiné.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

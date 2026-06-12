@@ -6,6 +6,14 @@ import 'package:geolocator/geolocator.dart';
 import 'kalman_filter.dart';
 import 'data_recorder.dart';
 
+/// Instantané immuable de l'état de navigation à un instant donné.
+///
+/// Regroupe la position estimée (issue de la fusion GPS + IMU par le filtre de
+/// Kalman étendu), la vitesse, le cap, les indicateurs de confiance/incertitude,
+/// l'état des capteurs (GPS disponible, calibration, immobilité), le mode courant
+/// ([NavigationMode]) ainsi que les traces de position estimée ([trail]) et GPS
+/// brute ([gpsTrail]). Construit par le getter [NavigationService.state] et
+/// consommé par l'interface utilisateur.
 class NavigationState {
   final double latitude;
   final double longitude;
@@ -22,6 +30,15 @@ class NavigationState {
   final List<PositionRecord> trail;
   final List<PositionRecord> gpsTrail;
 
+  /// Construit un état de navigation.
+  ///
+  /// Prend en paramètres tous les champs décrivant l'état courant : position
+  /// ([latitude], [longitude]), [speed], [heading], [confidence], [uncertainty],
+  /// disponibilité GPS ([gpsAvailable]), calibration ([isCalibrated],
+  /// [calibrationProgress]), immobilité ([isStationary]), temps écoulé depuis le
+  /// dernier point GPS ([timeSinceGPS]), [mode] courant et les traces ([trail],
+  /// [gpsTrail]). Renvoie une instance immuable. Appelé par le getter
+  /// [NavigationService.state].
   NavigationState({
     required this.latitude,
     required this.longitude,
@@ -40,6 +57,13 @@ class NavigationState {
   });
 }
 
+/// Point de trajectoire horodaté.
+///
+/// Représente une position unique (latitude [lat], longitude [lon]) à un instant
+/// [timestamp], avec son origine ([fromGPS] : vrai si issue d'un point GPS brut,
+/// faux si issue de l'estimation du filtre), sa [speed], son [heading], sa
+/// [confidence] et son [uncertainty]. Sert à constituer les traces estimée et GPS
+/// affichées sur la carte.
 class PositionRecord {
   final double lat;
   final double lon;
@@ -50,6 +74,12 @@ class PositionRecord {
   final double confidence;
   final double uncertainty;
 
+  /// Construit un point de trajectoire.
+  ///
+  /// Prend en paramètres la position ([lat], [lon]), l'horodatage [timestamp],
+  /// l'origine [fromGPS], la [speed], le [heading], la [confidence] et
+  /// l'[uncertainty]. Renvoie une instance immuable. Appelé chaque fois qu'un
+  /// nouveau point est ajouté à une trace (estimée ou GPS).
   PositionRecord({
     required this.lat,
     required this.lon,
@@ -62,12 +92,24 @@ class PositionRecord {
   });
 }
 
+/// Archive d'une session de "mode VS" terminée.
+///
+/// Conserve une copie figée des traces d'une session VS (estimée [trail] et GPS
+/// de référence [gpsTrail]), accompagnée de sa date de création [createdAt] et de
+/// la [reason] de son arrêt (ex. arrêt manuel, fin de navigation). Permet de
+/// revoir a posteriori une course IMU pure comparée à la vérité-terrain GPS.
 class ArchivedVSTrace {
   final DateTime createdAt;
   final String reason;
   final List<PositionRecord> trail;
   final List<PositionRecord> gpsTrail;
 
+  /// Construit une archive de trace VS.
+  ///
+  /// Prend en paramètres la date de création [createdAt], la [reason] de l'arrêt
+  /// et les copies des traces [trail] (estimée) et [gpsTrail] (GPS de référence).
+  /// Renvoie une instance immuable. Appelé par
+  /// [NavigationService._archiveCurrentVSTrace].
   ArchivedVSTrace({
     required this.createdAt,
     required this.reason,
@@ -76,6 +118,14 @@ class ArchivedVSTrace {
   });
 }
 
+/// Session de trajectoire reconstruite à partir d'un fichier CSV exporté.
+///
+/// Décrit un enregistrement CSV chargé depuis le disque : nom ([fileName]) et
+/// chemin ([filePath]) du fichier, date de dernière modification [modifiedAt],
+/// nombre de lignes de données [rowCount], et les traces reconstituées à la
+/// lecture : estimée ([trail]) et GPS ([gpsTrail]). Produite par
+/// [NavigationService.loadCsvTraceSessions] pour rejouer/visualiser d'anciennes
+/// sessions.
 class CsvTraceSession {
   final String fileName;
   final String filePath;
@@ -84,6 +134,12 @@ class CsvTraceSession {
   final List<PositionRecord> gpsTrail;
   final int rowCount;
 
+  /// Construit une session de trace CSV.
+  ///
+  /// Prend en paramètres le nom [fileName] et le chemin [filePath] du fichier, sa
+  /// date de modification [modifiedAt], les traces reconstruites [trail] et
+  /// [gpsTrail], et le nombre de lignes [rowCount]. Renvoie une instance
+  /// immuable. Appelé par [NavigationService._parseCsvTraceFile].
   CsvTraceSession({
     required this.fileName,
     required this.filePath,
@@ -94,8 +150,25 @@ class CsvTraceSession {
   });
 }
 
+/// Modes de fonctionnement du service de navigation.
+///
+/// - [idle] : à l'arrêt, aucun traitement en cours.
+/// - [calibrating] : calibration de l'IMU en cours (pas encore prêt à naviguer).
+/// - [gps] : fusion normale GPS + IMU, le GPS corrige le filtre.
+/// - [deadReckoning] : navigation à l'estime sur IMU seule (GPS perdu).
+/// - [gpsDenied] : GPS indisponible/refusé et filtre non calibré.
+/// - [vsMode] : mode VS, le GPS est enregistré comme vérité-terrain mais ne
+///   corrige pas le filtre (course IMU pure comparée au GPS).
 enum NavigationMode { idle, calibrating, gps, deadReckoning, gpsDenied, vsMode }
 
+/// Orchestrateur central de la navigation fusionnant GPS et IMU.
+///
+/// Pilote les capteurs (accéléromètre/gyroscope via `sensors_plus`, GPS via
+/// `geolocator`), cadence le filtre de Kalman étendu ([IMUKalmanFilter]) à 50 Hz
+/// (toutes les 20 ms), et expose l'état courant via le getter [state]. Gère le
+/// "mode VS" (où le GPS est enregistré comme vérité-terrain mais ne corrige pas
+/// le filtre) ainsi que l'auto-collecte de segments de données exportés en CSV.
+/// Étend [ChangeNotifier] : notifie l'interface à chaque mise à jour d'état.
 class NavigationService extends ChangeNotifier {
   final IMUKalmanFilter _kalman = IMUKalmanFilter();
   final DataRecorder _recorder = DataRecorder();
@@ -113,22 +186,23 @@ class NavigationService extends ChangeNotifier {
   static const Duration gpsLossThreshold = Duration(seconds: 8);
   static const Duration _gpsInterval = Duration(milliseconds: 500);
   static const int _gpsDistanceFilterMeters = 0;
-  // Avoid snapping to stale GPS fixes when GPS updates are sparse.
-  // If the last fix is old, the EKF prediction is usually more current.
+  // Évite de recaler sur un point GPS périmé quand les mises à jour GPS sont
+  // rares. Si le dernier point est ancien, la prédiction du EKF est en général
+  // plus à jour.
   static const Duration _maxSnapAge = Duration(milliseconds: 1200);
   Timer? _gpsWatchdog;
   bool _gpsAvailable = false;
 
-  // Estimated position trail (every 500 ms)
+  // Trace de la position estimée (un point toutes les 500 ms)
   final List<PositionRecord> _trail = [];
-  // Raw GPS position trail (one entry per GPS fix)
+  // Trace de la position GPS brute (un point par fix GPS)
   final List<PositionRecord> _gpsTrail = [];
   static const int maxTrailLength = 1000;
 
   NavigationMode _mode = NavigationMode.idle;
   Timer? _imuTimer;
 
-  // Auto-collection
+  // Auto-collecte
   static const Duration _autoMaxRecordDuration = Duration(minutes: 1);
   static const double _autoMaxGpsDistanceMeters = 1000.0;
   bool _autoActive = false;
@@ -145,19 +219,26 @@ class NavigationService extends ChangeNotifier {
   int _imuUpdates = 0;
   int _gpsUpdates = 0;
 
-  // Last known raw GPS values for CSV recording
+  // Dernières valeurs GPS brutes connues, utilisées pour l'enregistrement CSV
   double? _lastGpsLat,
       _lastGpsLon,
       _lastGpsSpeed,
       _lastGpsHeading,
       _lastGpsAccuracy;
 
-  // VS mode: GPS recorded as reference but does NOT correct the EKF
+  // Mode VS : le GPS est enregistré comme référence mais ne corrige PAS le EKF
   bool _vsMode = false;
   int _vsSessionCounter = 0;
   final List<ArchivedVSTrace> _archivedVSTraces = [];
   static const int _maxArchivedVSTraces = 20;
 
+  /// Construit et renvoie un instantané [NavigationState] de l'état courant.
+  ///
+  /// Ne prend aucun paramètre. Agrège les valeurs du filtre de Kalman (position,
+  /// vitesse, cap, confiance, incertitude, calibration, immobilité), l'état GPS
+  /// et le [_mode], et fournit des copies non modifiables des traces estimée et
+  /// GPS. Appelé par l'interface utilisateur (et les listeners de
+  /// [ChangeNotifier]) à chaque rafraîchissement de l'affichage.
   NavigationState get state => NavigationState(
         latitude: _kalman.estimatedPosition[0],
         longitude: _kalman.estimatedPosition[1],
@@ -175,6 +256,15 @@ class NavigationService extends ChangeNotifier {
         gpsTrail: List.unmodifiable(_gpsTrail),
       );
 
+  /// Démarre une nouvelle session de navigation.
+  ///
+  /// Ne prend aucun paramètre. Réinitialise le filtre de Kalman, les traces, les
+  /// compteurs et les valeurs GPS, passe en mode [NavigationMode.calibrating],
+  /// lance l'écoute des capteurs IMU ([_startIMU]) et du GPS ([_startGPS]),
+  /// démarre l'enregistrement des données et arme le timer périodique (20 ms,
+  /// 50 Hz) qui cadence [_processIMU]. Renvoie un [Future] qui se complète quand
+  /// l'initialisation du GPS est terminée. Appelé par l'UI au lancement de la
+  /// navigation.
   Future<void> start() async {
     _kalman.reset();
     _trail.clear();
@@ -206,6 +296,13 @@ class NavigationService extends ChangeNotifier {
     });
   }
 
+  /// Arrête la session de navigation en cours.
+  ///
+  /// Ne prend aucun paramètre. Stoppe l'auto-collecte, archive et exporte la
+  /// course VS courante si nécessaire, annule tous les abonnements (capteurs,
+  /// GPS, watchdog) et les timers, arrête l'enregistrement, puis repasse en mode
+  /// [NavigationMode.idle]. Ne renvoie rien. Appelé par l'UI à l'arrêt de la
+  /// navigation et par [dispose].
   void stop() {
     stopAutoCollection();
     if (_vsMode && !_autoActive) {
@@ -228,6 +325,12 @@ class NavigationService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Démarre l'écoute des capteurs inertiels (accéléromètre et gyroscope).
+  ///
+  /// Ne prend aucun paramètre. S'abonne aux flux `accelerometerEventStream` et
+  /// `gyroscopeEventStream` (période d'échantillonnage 20 ms) et met à jour en
+  /// continu les dernières valeurs brutes ([_ax]/[_ay]/[_az] et
+  /// [_gx]/[_gy]/[_gz]). Ne renvoie rien. Appelé par [start].
   void _startIMU() {
     _accelSub = accelerometerEventStream(
       samplingPeriod: const Duration(milliseconds: 20),
@@ -246,8 +349,18 @@ class NavigationService extends ChangeNotifier {
     });
   }
 
+  /// Initialise et démarre l'écoute du flux de positions GPS.
+  ///
+  /// Ne prend aucun paramètre. Vérifie l'activation du service de localisation et
+  /// les permissions (les demande si nécessaire) ; en cas de refus, passe en mode
+  /// [NavigationMode.gpsDenied] et sort. Sinon s'abonne au flux GPS (réglages via
+  /// [_buildLocationSettings]) en routant les positions vers [_onGPSUpdate] et
+  /// les erreurs vers [_onGPSLost], puis arme un watchdog périodique (2 s) qui
+  /// déclenche [_onGPSLost] si aucun point n'est reçu au-delà de
+  /// [gpsLossThreshold]. Renvoie un [Future] qui se complète une fois l'écoute
+  /// mise en place. Appelé par [start] et [restoreGPS].
   Future<void> _startGPS() async {
-    // Cancel any existing subscription before creating a new one
+    // Annule tout abonnement existant avant d'en créer un nouveau
     await _gpsSub?.cancel();
     _gpsSub = null;
     _gpsWatchdog?.cancel();
@@ -286,6 +399,13 @@ class NavigationService extends ChangeNotifier {
     });
   }
 
+  /// Construit les réglages de localisation adaptés à la plateforme courante.
+  ///
+  /// Ne prend aucun paramètre. Selon la plateforme ([defaultTargetPlatform]),
+  /// renvoie un `AndroidSettings`, un `AppleSettings` (type d'activité navigation
+  /// automobile) ou un `LocationSettings` générique, tous configurés en précision
+  /// `bestForNavigation` avec le filtre de distance [_gpsDistanceFilterMeters].
+  /// Renvoie l'objet [LocationSettings] correspondant. Appelé par [_startGPS].
   LocationSettings _buildLocationSettings() {
     if (defaultTargetPlatform == TargetPlatform.android) {
       return AndroidSettings(
@@ -310,6 +430,16 @@ class NavigationService extends ChangeNotifier {
     );
   }
 
+  /// Traite un cycle du filtre à la cadence de 50 Hz (toutes les 20 ms).
+  ///
+  /// Ne prend aucun paramètre (lit les dernières valeurs capteurs en champs).
+  /// Calcule le pas de temps `dt` écoulé depuis le dernier cycle. Si le filtre
+  /// n'est pas calibré, ajoute un échantillon de calibration et reste en mode
+  /// [NavigationMode.calibrating]. Sinon exécute la prédiction du EKF
+  /// (`predict`) et la contrainte non-holonome (`updateNHC`), enregistre la
+  /// donnée brute via le [DataRecorder], ajoute un point à la trace estimée
+  /// [_trail] au plus toutes les 500 ms, et notifie l'UI un cycle sur cinq. Ne
+  /// renvoie rien. Appelé par le timer périodique armé dans [start].
   void _processIMU() {
     final now = DateTime.now();
     double dt = 0.02;
@@ -330,7 +460,7 @@ class NavigationService extends ChangeNotifier {
     _kalman.updateNHC();
     _imuUpdates++;
 
-    // Record raw data at full IMU rate
+    // Enregistre la donnée brute à la pleine cadence de l'IMU
     _recorder.addRecord(RawDataRecord(
       timestampMs: now.millisecondsSinceEpoch,
       axRaw: _ax,
@@ -355,7 +485,7 @@ class NavigationService extends ChangeNotifier {
       isStationary: _kalman.isStationary,
     ));
 
-    // Estimated position trail (every 500 ms)
+    // Trace de la position estimée (un point toutes les 500 ms)
     if (_trail.isEmpty ||
         now.difference(_trail.last.timestamp).inMilliseconds > 500) {
       final pos = _kalman.estimatedPosition;
@@ -377,6 +507,16 @@ class NavigationService extends ChangeNotifier {
     if (_imuUpdates % 5 == 0) notifyListeners();
   }
 
+  /// Traite la réception d'un nouveau point GPS.
+  ///
+  /// Prend en paramètre la [position] GPS reçue. Met à jour l'horodatage du
+  /// dernier point, l'indicateur [_gpsAvailable] et les dernières valeurs GPS
+  /// brutes. En mode VS, n'applique aucune correction au filtre (le GPS reste une
+  /// simple référence) ; sinon passe en mode [NavigationMode.gps] (si calibré) et
+  /// corrige le filtre via `updateGPS`. Dans tous les cas, ajoute le point brut à
+  /// la trace GPS [_gpsTrail], alimente l'auto-collecte ([_onAutoCollectGPS]) si
+  /// active, incrémente le compteur et notifie l'UI. Ne renvoie rien. Appelé par
+  /// le flux GPS abonné dans [_startGPS].
   void _onGPSUpdate(Position position) {
     _lastGPSUpdate = DateTime.now();
     _gpsAvailable = true;
@@ -401,7 +541,7 @@ class NavigationService extends ChangeNotifier {
       );
     }
 
-    // Always record raw GPS fix as reference
+    // Enregistre toujours le point GPS brut comme référence
     _gpsTrail.add(PositionRecord(
       lat: position.latitude,
       lon: position.longitude,
@@ -422,6 +562,14 @@ class NavigationService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Recale instantanément le filtre de Kalman sur le dernier point GPS connu.
+  ///
+  /// Ne prend aucun paramètre. Ne fait rien si le filtre n'est pas calibré, si
+  /// aucune valeur GPS n'est disponible, ou si le dernier point est plus ancien
+  /// que [_maxSnapAge] (auquel cas la prédiction du EKF est jugée plus fiable).
+  /// Sinon appelle `snapToGPS` pour repositionner l'état du filtre sur la
+  /// dernière position/vitesse/cap GPS. Ne renvoie rien. Appelé par [_onGPSLost],
+  /// [startVSMode] et [simulateGPSLoss].
   void _snapKalmanToLastGPS() {
     if (!_kalman.isCalibrated ||
         _lastGPSUpdate == null ||
@@ -447,6 +595,14 @@ class NavigationService extends ChangeNotifier {
     );
   }
 
+  /// Gère la perte du signal GPS.
+  ///
+  /// Ne prend aucun paramètre. N'agit que si le GPS était disponible : recale le
+  /// filtre sur le dernier point ([_snapKalmanToLastGPS]), marque le GPS comme
+  /// indisponible, efface les dernières valeurs GPS brutes et, hors mode VS,
+  /// bascule en mode [NavigationMode.deadReckoning] (si calibré) ou
+  /// [NavigationMode.gpsDenied]. Notifie l'UI. Ne renvoie rien. Appelé par le
+  /// watchdog/erreur de [_startGPS] et par [simulateGPSLoss].
   void _onGPSLost() {
     if (_gpsAvailable) {
       _snapKalmanToLastGPS();
@@ -466,6 +622,15 @@ class NavigationService extends ChangeNotifier {
   }
 
 
+  /// Démarre le "mode VS" (vérité-terrain GPS sans correction du filtre).
+  ///
+  /// Ne prend aucun paramètre. Ne fait rien si le filtre n'est pas calibré ou si
+  /// le GPS n'est pas disponible. Incrémente le compteur de session VS, recale le
+  /// filtre sur le dernier point GPS ([_snapKalmanToLastGPS]), vide les traces,
+  /// (re)démarre l'enregistrement, active [_vsMode], passe en mode
+  /// [NavigationMode.vsMode] et remet à zéro `timeSinceLastGPS` pour que la
+  /// confiance reparte à 100 % sur une course IMU pure. Notifie l'UI. Ne renvoie
+  /// rien. Appelé par l'UI, [restartVSMode] et [_startAutoSession].
   void startVSMode() {
     if (!_kalman.isCalibrated || !_gpsAvailable) return;
     _vsSessionCounter++;
@@ -475,12 +640,21 @@ class NavigationService extends ChangeNotifier {
     _recorder.startRecording();
     _vsMode = true;
     _mode = NavigationMode.vsMode;
-    // Reset IMU timeSinceLastGPS so confidence starts at 100% for pure IMU run
+    // Remet à zéro timeSinceLastGPS pour que la confiance reparte à 100 % sur
+    // une course en IMU pure
     _kalman.timeSinceLastGPS = 0;
     notifyListeners();
   }
 
-  /// Stop VS mode and return to normal GPS fusion.
+  /// Arrête le mode VS et revient à la fusion GPS normale.
+  ///
+  /// Ne prend aucun paramètre. Si le mode VS est actif et que l'auto-collecte ne
+  /// l'est pas, archive ([_archiveCurrentVSTrace]) et exporte
+  /// ([_exportCurrentVSRun]) la course courante. Désactive [_vsMode] et bascule
+  /// en mode [NavigationMode.gps] (si GPS disponible) ou
+  /// [NavigationMode.deadReckoning]. Notifie l'UI. Ne renvoie rien. Appelé par
+  /// l'UI, [restartVSMode], [startAutoCollection], [stopAutoCollection] et
+  /// [_exportAutoSession].
   void stopVSMode() {
     if (_vsMode && !_autoActive) {
       _archiveCurrentVSTrace(reason: 'manual_stop_vs');
@@ -491,14 +665,24 @@ class NavigationService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Stop current VS session and immediately start a new one.
-  /// The previous VS trace is archived and can still be viewed.
+  /// Arrête la session VS courante et en démarre immédiatement une nouvelle.
+  ///
+  /// Ne prend aucun paramètre. Ne fait rien si le filtre n'est pas calibré ou si
+  /// le GPS n'est pas disponible. La trace VS précédente est archivée (via
+  /// [stopVSMode]) et reste consultable, puis une nouvelle session est lancée via
+  /// [startVSMode]. Ne renvoie rien. Appelé par l'UI.
   void restartVSMode() {
     if (!_kalman.isCalibrated || !_gpsAvailable) return;
     if (_vsMode) stopVSMode();
     startVSMode();
   }
 
+  /// Simule une perte de signal GPS (pour les tests/démonstrations).
+  ///
+  /// Ne prend aucun paramètre. Recale d'abord le filtre sur le dernier point
+  /// ([_snapKalmanToLastGPS]), annule l'abonnement GPS et le watchdog, puis
+  /// déclenche [_onGPSLost] pour basculer en navigation à l'estime. Ne renvoie
+  /// rien. Appelé par l'UI.
   void simulateGPSLoss() {
     _snapKalmanToLastGPS();
     _gpsSub?.cancel();
@@ -508,17 +692,32 @@ class NavigationService extends ChangeNotifier {
     _onGPSLost();
   }
 
+  /// Rétablit l'écoute du GPS après une perte (réelle ou simulée).
+  ///
+  /// Ne prend aucun paramètre. Relance l'initialisation du GPS via [_startGPS].
+  /// Renvoie un [Future] qui se complète quand l'écoute est rétablie. Appelé par
+  /// l'UI.
   Future<void> restoreGPS() async {
     await _startGPS();
   }
 
+  /// Exporte les données enregistrées au format CSV.
+  ///
+  /// Ne prend aucun paramètre. Délègue au [DataRecorder] l'écriture du CSV.
+  /// Renvoie un [Future] contenant le chemin du fichier exporté, ou `null` en cas
+  /// d'échec/absence de données. Appelé par l'UI (export manuel).
   Future<String?> exportData() => _recorder.exportCSV();
 
-  //  Auto-collection
+  //  Auto-collecte
 
-  /// Start automatic VS-mode cycling.
-  /// Each segment stops on 1 km GPS distance or 1 minute, exports CSV,
-  /// then starts the next segment immediately.
+  /// Démarre le cyclage automatique du mode VS.
+  ///
+  /// Ne prend aucun paramètre. Ne fait rien si l'auto-collecte est déjà active,
+  /// si le filtre n'est pas calibré ou si le GPS n'est pas disponible. Arrête un
+  /// éventuel mode VS manuel, active [_autoActive], remet le compteur de session
+  /// à zéro et lance le premier segment via [_startAutoSession]. Chaque segment
+  /// s'arrête à 1 km de distance GPS ou au bout d'1 minute, exporte un CSV, puis
+  /// le segment suivant démarre immédiatement. Ne renvoie rien. Appelé par l'UI.
   void startAutoCollection() {
     if (_autoActive || !_kalman.isCalibrated || !_gpsAvailable) return;
     if (_vsMode) stopVSMode();
@@ -527,6 +726,13 @@ class NavigationService extends ChangeNotifier {
     _startAutoSession();
   }
 
+  /// Arrête le cyclage automatique du mode VS.
+  ///
+  /// Ne prend aucun paramètre. Ne fait rien si l'auto-collecte n'est pas active.
+  /// Désactive [_autoActive], annule le timer de décompte et réinitialise les
+  /// états de session. Si un segment en cours contient des données, exporte un
+  /// CSV partiel via [_exportAutoSession]. Arrête le mode VS si nécessaire et
+  /// notifie l'UI. Ne renvoie rien. Appelé par l'UI, [stop] et [reset].
   void stopAutoCollection() {
     if (!_autoActive) return;
     _autoActive = false;
@@ -546,6 +752,15 @@ class NavigationService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Démarre un nouveau segment d'auto-collecte.
+  ///
+  /// Ne prend aucun paramètre. Ne fait rien si l'auto-collecte est inactive ou
+  /// qu'un export est en cours. Si le filtre n'est pas calibré ou le GPS
+  /// indisponible, réinitialise les états de session et attend. Sinon incrémente
+  /// le numéro de session, initialise le suivi de distance/temps, démarre le mode
+  /// VS ([startVSMode]), (re)démarre l'enregistrement et lance le décompte
+  /// ([_startAutoCountdown]). Notifie l'UI. Ne renvoie rien. Appelé par
+  /// [startAutoCollection] et [_exportAutoSession] (enchaînement des segments).
   void _startAutoSession() {
     if (!_autoActive || _autoExportInProgress) return;
     if (!_kalman.isCalibrated || !_gpsAvailable) {
@@ -574,6 +789,16 @@ class NavigationService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Exporte le segment d'auto-collecte courant en CSV et enchaîne le suivant.
+  ///
+  /// Prend en paramètres [partial] (vrai si l'export est partiel/interrompu) et
+  /// [reason] (motif de l'arrêt, utilisé dans le nom de fichier). Ne fait rien si
+  /// un export est déjà en cours. Construit une étiquette de session, réinitialise
+  /// les états, arrête le mode VS, écrit le CSV via le [DataRecorder], puis — si
+  /// l'auto-collecte est toujours active — relance immédiatement un segment via
+  /// [_startAutoSession]. Renvoie un [Future] complété en fin d'export. Appelé par
+  /// [stopAutoCollection], [_startAutoCountdown] (limite de temps) et
+  /// [_onAutoCollectGPS] (limite de distance).
   Future<void> _exportAutoSession(
       {required bool partial, required String reason}) async {
     if (_autoExportInProgress) return;
@@ -600,16 +825,24 @@ class NavigationService extends ChangeNotifier {
 
     _autoExportInProgress = false;
     if (_autoActive) {
-      // Start the next segment immediately.
+      // Démarre immédiatement le segment suivant.
       _startAutoSession();
       return;
     }
 
-    // Keep the latest session index visible in debug UI.
+    // Conserve le dernier index de session visible dans l'UI de debug.
     _autoSession = sessionIndex;
     notifyListeners();
   }
 
+  /// Arme le décompte d'1 minute du segment d'auto-collecte courant.
+  ///
+  /// Ne prend aucun paramètre. Démarre un timer périodique (1 s) qui met à jour
+  /// le décompte restant [_autoCountdown] et notifie l'UI ; il s'annule si
+  /// l'auto-collecte/l'enregistrement s'arrête. Quand la durée maximale
+  /// [_autoMaxRecordDuration] est atteinte, déclenche l'export du segment via
+  /// [_exportAutoSession] (motif `time_1min`). Ne renvoie rien. Appelé par
+  /// [_startAutoSession].
   void _startAutoCountdown() {
     _autoCountdownTimer?.cancel();
     _autoCountdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -632,6 +865,15 @@ class NavigationService extends ChangeNotifier {
     });
   }
 
+  /// Met à jour la distance GPS parcourue pendant l'auto-collecte.
+  ///
+  /// Prend en paramètre la [position] GPS courante. Ne fait rien si
+  /// l'auto-collecte ou l'enregistrement n'est pas actif. Cumule la distance
+  /// parcourue (via `Geolocator.distanceBetween`) dans
+  /// [_autoSessionGpsDistance] et mémorise la dernière position. Quand le seuil
+  /// [_autoMaxGpsDistanceMeters] (1 km) est atteint, déclenche l'export du
+  /// segment via [_exportAutoSession] (motif `dist_1km`). Ne renvoie rien.
+  /// Appelé par [_onGPSUpdate] lorsque l'auto-collecte enregistre.
   void _onAutoCollectGPS(Position position) {
     if (!_autoActive || !_autoRecording) return;
 
@@ -657,6 +899,11 @@ class NavigationService extends ChangeNotifier {
     }
   }
 
+  /// Exporte en CSV la course VS courante (hors auto-collecte).
+  ///
+  /// Prend en paramètre [reason] (motif de l'export, intégré au nom de fichier).
+  /// Renvoie un [Future] contenant le chemin du CSV exporté, ou `null` si aucun
+  /// enregistrement n'est disponible. Appelé par [stop] et [stopVSMode].
   Future<String?> _exportCurrentVSRun({required String reason}) async {
     if (_recorder.recordCount == 0) return null;
     final tag =
@@ -664,6 +911,13 @@ class NavigationService extends ChangeNotifier {
     return _recorder.exportCSV(sessionTag: tag);
   }
 
+  /// Charge et reconstruit toutes les sessions de trace depuis les CSV exportés.
+  ///
+  /// Ne prend aucun paramètre. Liste les fichiers `imu_*.csv` du répertoire
+  /// d'export, les trie du plus récent au plus ancien, puis analyse chacun via
+  /// [_parseCsvTraceFile]. Renvoie un [Future] contenant la liste des
+  /// [CsvTraceSession] reconstituées (vide si le répertoire n'existe pas).
+  /// Appelé par l'UI pour afficher l'historique des sessions.
   Future<List<CsvTraceSession>> loadCsvTraceSessions() async {
     final dir = await _recorder.getExportDirectory();
     if (!dir.existsSync()) return [];
@@ -690,6 +944,15 @@ class NavigationService extends ChangeNotifier {
     return sessions;
   }
 
+  /// Analyse un fichier CSV et reconstruit la session de trace correspondante.
+  ///
+  /// Prend en paramètre le [file] CSV à lire. Lit l'en-tête pour localiser les
+  /// colonnes utiles, puis parcourt les lignes pour reconstruire la trace
+  /// estimée (sous-échantillonnée à au plus un point toutes les 500 ms) et la
+  /// trace GPS (filtrée par écart temporel d'au moins 800 ms ou déplacement
+  /// supérieur à 0,7 m). Renvoie un [Future] contenant la [CsvTraceSession]
+  /// reconstruite, ou `null` si le fichier est vide, mal formé ou sans données
+  /// exploitables. Appelé par [loadCsvTraceSessions].
   Future<CsvTraceSession?> _parseCsvTraceFile(File file) async {
     final lines = await file.readAsLines();
     if (lines.length <= 1) return null;
@@ -700,6 +963,7 @@ class NavigationService extends ChangeNotifier {
       index[header[i].trim()] = i;
     }
 
+    /// Renvoie l'index de la colonne dont l'en-tête est [name], ou -1 si absente.
     int idx(String name) => index[name] ?? -1;
 
     final iTs = idx('timestamp_ms');
@@ -808,6 +1072,12 @@ class NavigationService extends ChangeNotifier {
     );
   }
 
+  /// Analyse de façon sûre une valeur `double` dans une ligne CSV.
+  ///
+  /// Prend en paramètres la liste de colonnes [cols] et l'index [idx] de la
+  /// colonne visée. Renvoie le `double` analysé, ou `null` si l'index est hors
+  /// limites, la cellule vide ou la valeur non convertible. Appelé par
+  /// [_parseCsvTraceFile] pour extraire les champs numériques.
   double? _parseDoubleSafe(List<String> cols, int idx) {
     if (idx < 0 || idx >= cols.length) return null;
     final v = cols[idx].trim();
@@ -815,6 +1085,13 @@ class NavigationService extends ChangeNotifier {
     return double.tryParse(v);
   }
 
+  /// Archive une copie figée de la trace VS courante.
+  ///
+  /// Prend en paramètre [reason] (motif de l'archivage). Ne fait rien si les deux
+  /// traces sont vides. Ajoute une [ArchivedVSTrace] (copies des traces estimée
+  /// et GPS) à la liste d'archives, en bornant celle-ci à [_maxArchivedVSTraces]
+  /// entrées (suppression de la plus ancienne au-delà). Ne renvoie rien. Appelé
+  /// par [stop] et [stopVSMode].
   void _archiveCurrentVSTrace({required String reason}) {
     if (_trail.isEmpty && _gpsTrail.isEmpty) return;
     _archivedVSTraces.add(
@@ -830,8 +1107,14 @@ class NavigationService extends ChangeNotifier {
     }
   }
 
-  //  Reset / getters
+  //  Réinitialisation / getters
 
+  /// Réinitialise entièrement le service de navigation.
+  ///
+  /// Ne prend aucun paramètre. Arrête l'auto-collecte, réinitialise le filtre de
+  /// Kalman, vide les traces, efface l'enregistreur et tous les compteurs/états
+  /// (GPS, VS, archives), puis repasse en mode [NavigationMode.idle]. Notifie
+  /// l'UI. Ne renvoie rien. Appelé par l'UI pour repartir d'un état vierge.
   void reset() {
     stopAutoCollection();
     _kalman.reset();
@@ -855,20 +1138,49 @@ class NavigationService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Renvoie le nombre total de cycles IMU traités depuis le dernier démarrage.
   int get imuUpdateCount => _imuUpdates;
+
+  /// Renvoie le nombre total de points GPS reçus depuis le dernier démarrage.
   int get gpsUpdateCount => _gpsUpdates;
+
+  /// Renvoie le nombre d'enregistrements actuellement détenus par l'enregistreur.
   int get recordCount => _recorder.recordCount;
+
+  /// Renvoie vrai si le mode VS est actuellement actif.
   bool get isVSMode => _vsMode;
+
+  /// Renvoie vrai si l'auto-collecte est en cours.
   bool get isAutoCollecting => _autoActive;
+
+  /// Renvoie vrai si un segment d'auto-collecte enregistre actuellement.
   bool get autoIsRecording => _autoRecording;
+
+  /// Renvoie le numéro du segment d'auto-collecte courant.
   int get autoSession => _autoSession;
+
+  /// Renvoie le nombre de secondes restantes avant la fin du segment courant.
   int get autoCountdown => _autoCountdown;
+
+  /// Renvoie la distance GPS (en mètres) parcourue dans le segment courant.
   double get autoDistanceMeters => _autoSessionGpsDistance;
+
+  /// Renvoie la distance GPS cible (en mètres) déclenchant la fin d'un segment.
   double get autoDistanceTargetMeters => _autoMaxGpsDistanceMeters;
+
+  /// Renvoie le nombre de traces VS archivées.
   int get archivedVSTraceCount => _archivedVSTraces.length;
+
+  /// Renvoie la dernière trace VS archivée, ou `null` s'il n'y en a aucune.
   ArchivedVSTrace? get lastArchivedVSTrace =>
       _archivedVSTraces.isNotEmpty ? _archivedVSTraces.last : null;
 
+  /// Libère les ressources du service avant sa destruction.
+  ///
+  /// Ne prend aucun paramètre. Appelle [stop] pour fermer capteurs, GPS et
+  /// timers, puis délègue à `super.dispose()`. Ne renvoie rien. Appelé
+  /// automatiquement par le framework Flutter lorsque le service n'est plus
+  /// utilisé.
   @override
   void dispose() {
     stop();
